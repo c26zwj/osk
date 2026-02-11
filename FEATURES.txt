@@ -1,0 +1,93 @@
+OSK - On-Screen Keyboard for KDE Plasma Wayland
+================================================
+
+KEYBOARD LAYOUT
+- Full QWERTY layout with 6 rows
+- Function keys (Esc, F1-F12, Del)
+- Number row with shift symbols
+- Full punctuation and special characters
+- Dual-label keys showing both normal and shift characters
+- Arrow keys, Home, End
+- Spacebar, Tab, Enter, Backspace
+
+MODIFIER KEYS
+- Shift, Ctrl, Alt, Meta (Super/Windows), Caps Lock
+- One-shot mode: modifier applies to next key press then releases
+- Lock mode: second press locks modifier until toggled off again
+- Visual feedback: blue highlight when active, red when locked
+- Right-click on any key sends the shift variant with a flash animation
+
+KEY REPEAT
+- Hold a key to repeat it automatically
+- Configurable initial delay (100-1000 ms)
+- Configurable repeat interval (20-200 ms)
+
+SIDE BUTTONS
+- Cut, Copy, Paste with colored icons
+- Home, End navigation keys
+- Settings toggle
+- Buttons align proportionally with keyboard rows
+
+CLIPBOARD HISTORY
+- Integrates with KDE Klipper via D-Bus
+- Browse and search clipboard history
+- Filter box with live search
+- Click an entry to paste it into the focused application
+- Automatically saves and restores focus to the previous app
+- OSK keys type into the filter box while clipboard is open
+
+TEXT SHORTCUTS / AUTO-EXPANSION
+- Define trigger words that auto-expand to longer text
+- Type a trigger (e.g. "addr") and it replaces with the expansion
+- 3-second inactivity timeout on the type buffer
+- Shortcuts manager with add, edit, delete, and preview
+- Shortcuts persist across sessions
+
+SETTINGS
+- 16 dark background color presets
+- Key repeat delay and interval adjustment
+- Key border toggle (outline around each key)
+- All settings saved automatically
+
+THEMING
+- Colors derived dynamically from the chosen background
+- Consistent dark theme across all UI elements
+- Smooth 80ms color animations on key presses
+
+DRAG AND RESIZE
+- Drag bar at top to move the keyboard anywhere on screen
+- Corner resize handle to change width and height
+- Size popup for precise +/- adjustment
+- Width range: 450-2000 px, Height range: 150-800 px
+- Content scales proportionally with keyboard size
+- Position and size persist across sessions
+
+MULTI-MONITOR
+- Drag the keyboard across screen edges to move between monitors
+- Automatic screen switching with layer-shell surface rebinding
+
+EXTENSION PANEL
+- Slides up above the keyboard for Clipboard, Shortcuts, and Settings pages
+- Close button to dismiss
+- Mutual exclusivity: only one page visible at a time
+- Input region updates dynamically to cover both panel and keyboard
+
+SYSTEM TRAY
+- System tray icon (input-keyboard)
+- Click tray icon to show/hide keyboard
+
+GLOBAL SHORTCUT
+- Meta+K toggles keyboard visibility from anywhere
+- Registered via KDE Global Accelerator
+
+WAYLAND INTEGRATION
+- Uses KDE LayerShellQt for proper overlay rendering
+- Overlay layer: always on top of normal windows
+- Transparent fullscreen surface with input region masking
+- Clicks outside the keyboard pass through to applications below
+- Keyboard interactivity switches between None and OnDemand as needed
+
+INPUT METHOD
+- Key injection via Linux /dev/uinput (kernel-level, works with any application)
+- Smart routing: keys go to QML text fields when internal dialogs are open
+- Focus-aware clipboard paste with KWin D-Bus window activation

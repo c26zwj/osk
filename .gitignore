@@ -1,0 +1,33 @@
+# Build
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Compiled
+*.o
+*.so
+*.a
+*.out
+/osk
+
+# Qt
+moc_*.cpp
+qrc_*.cpp
+*.qmlc
+*.jsc
+.qmake.stash
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cache/
+compile_commands.json
+
+# Claude Code
+.claude/

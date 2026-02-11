@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="qml/main.qml">src/qml/main.qml</file>
+        <file alias="qml/KeyboardLayout.qml">src/qml/KeyboardLayout.qml</file>
+        <file alias="qml/KeyButton.qml">src/qml/KeyButton.qml</file>
+        <file alias="qml/LettersPage.qml">src/qml/LettersPage.qml</file>
+        <file alias="qml/SettingsPage.qml">src/qml/SettingsPage.qml</file>
+        <file alias="qml/ShortcutsPage.qml">src/qml/ShortcutsPage.qml</file>
+        <file alias="qml/ClipboardPage.qml">src/qml/ClipboardPage.qml</file>
+        <file alias="qml/Theme.qml">src/qml/Theme.qml</file>
+        <file alias="qml/qmldir">src/qml/qmldir</file>
+    </qresource>
+</RCC>
