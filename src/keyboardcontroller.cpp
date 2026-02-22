@@ -2,19 +2,29 @@
 #include "virtualkeyboard.h"
 
 #include <linux/input-event-codes.h>
+#include <QAction>
+#include <QApplication>
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
+#include <QStandardPaths>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QQuickWindow>
 #include <QScreen>
+#include <QFileDialog>
+#include <QProcess>
 #include <QSettings>
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusMessage>
 #include <QDBusReply>
 #include <QDBusVariant>
+#include <KGlobalAccel>
 #include <LayerShellQt/Window>
 
 // ---------------------------------------------------------------------------
@@ -70,6 +80,10 @@ QChar KeyboardController::evdevToChar(int keyCode, bool shift)
 }
 
 // ---------------------------------------------------------------------------
+// Character → evdev keycode (reverse of evdevToChar)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Constructor / Destructor
 // ---------------------------------------------------------------------------
 KeyboardController::KeyboardController(QObject *parent)
@@ -85,8 +99,14 @@ KeyboardController::KeyboardController(QObject *parent)
     m_keyboardWidth = s.value(QStringLiteral("keyboardWidth"), 900).toInt();
     m_keyboardHeight = s.value(QStringLiteral("keyboardHeight"), 300).toInt();
     m_keyBorderEnabled = s.value(QStringLiteral("keyBorderEnabled"), false).toBool();
+    m_keyPressColor = s.value(QStringLiteral("keyPressColor")).toString();
+    m_lockedKeyColor = s.value(QStringLiteral("lockedKeyColor")).toString();
+    m_keyBorderColor = s.value(QStringLiteral("keyBorderColor")).toString();
     m_panelX = s.value(QStringLiteral("panelX"), -1).toInt();
     m_panelY = s.value(QStringLiteral("panelY"), -1).toInt();
+    m_pagePanelHeight = s.value(QStringLiteral("pagePanelHeight"), 250).toInt();
+    m_whisperModelPath = s.value(QStringLiteral("whisperModelPath"),
+        QDir::homePath() + QStringLiteral("/.local/share/whisper.cpp/ggml-base.en.bin")).toString();
 
     // Load shortcuts
     m_shortcuts = s.value(QStringLiteral("shortcuts")).toList();
@@ -103,6 +123,29 @@ KeyboardController::KeyboardController(QObject *parent)
         saveShortcuts();
         s.remove(QStringLiteral("snippets"));
     }
+
+    // New settings
+    m_opacity = s.value(QStringLiteral("opacity"), 1.0).toDouble();
+    m_fontSize = s.value(QStringLiteral("fontSize"), 14).toInt();
+    m_keyRadius = s.value(QStringLiteral("keyRadius"), 6).toInt();
+    m_autoHideDelay = s.value(QStringLiteral("autoHideDelay"), 0).toInt();
+    m_soundFeedback = s.value(QStringLiteral("soundFeedback"), false).toBool();
+    m_closeOnPaste = s.value(QStringLiteral("closeOnPaste"), false).toBool();
+    m_closeOnInsertShortcut = s.value(QStringLiteral("closeOnInsertShortcut"), false).toBool();
+    m_stickyPosition = s.value(QStringLiteral("stickyPosition"), 0).toInt();
+    m_keySpacing = s.value(QStringLiteral("keySpacing"), 3).toInt();
+    m_compactMode = s.value(QStringLiteral("compactMode"), false).toBool();
+    m_numpadVisible = s.value(QStringLiteral("numpadVisible"), false).toBool();
+    m_globalShortcut = s.value(QStringLiteral("globalShortcut"),
+        QStringLiteral("Meta+K")).toString();
+    m_defaultScreen = s.value(QStringLiteral("defaultScreen"), 0).toInt();
+    m_autostartEnabled = QFile::exists(autostartFilePath());
+
+    // Auto-hide timer
+    m_autoHideTimer.setSingleShot(true);
+    connect(&m_autoHideTimer, &QTimer::timeout, this, [this]() {
+        minimizeToTray();
+    });
 
     // Buffer inactivity timer
     m_bufferTimer.setSingleShot(true);
@@ -177,6 +220,8 @@ bool KeyboardController::shortcutPageVisible() const { return m_shortcutPageVisi
 void KeyboardController::setShortcutPageVisible(bool visible)
 {
     if (m_shortcutPageVisible != visible) {
+        if (visible)
+            m_savedWindowIsTerminal = isActiveWindowTerminal();
         m_shortcutPageVisible = visible;
         emit shortcutPageVisibleChanged();
     }
@@ -231,6 +276,42 @@ void KeyboardController::setKeyBorderEnabled(bool enabled)
 }
 
 // ---------------------------------------------------------------------------
+// Custom colors
+// ---------------------------------------------------------------------------
+QString KeyboardController::keyPressColor() const { return m_keyPressColor; }
+
+void KeyboardController::setKeyPressColor(const QString &color)
+{
+    if (m_keyPressColor != color) {
+        m_keyPressColor = color;
+        QSettings().setValue(QStringLiteral("keyPressColor"), color);
+        emit keyPressColorChanged();
+    }
+}
+
+QString KeyboardController::lockedKeyColor() const { return m_lockedKeyColor; }
+
+void KeyboardController::setLockedKeyColor(const QString &color)
+{
+    if (m_lockedKeyColor != color) {
+        m_lockedKeyColor = color;
+        QSettings().setValue(QStringLiteral("lockedKeyColor"), color);
+        emit lockedKeyColorChanged();
+    }
+}
+
+QString KeyboardController::keyBorderColor() const { return m_keyBorderColor; }
+
+void KeyboardController::setKeyBorderColor(const QString &color)
+{
+    if (m_keyBorderColor != color) {
+        m_keyBorderColor = color;
+        QSettings().setValue(QStringLiteral("keyBorderColor"), color);
+        emit keyBorderColorChanged();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Panel position persistence
 // ---------------------------------------------------------------------------
 int KeyboardController::panelX() const { return m_panelX; }
@@ -260,6 +341,349 @@ void KeyboardController::savePanelPosition(int x, int y)
     QSettings s;
     s.setValue(QStringLiteral("panelX"), x);
     s.setValue(QStringLiteral("panelY"), y);
+}
+
+int KeyboardController::pagePanelHeight() const { return m_pagePanelHeight; }
+
+void KeyboardController::setPagePanelHeight(int px)
+{
+    px = qBound(150, px, 800);
+    if (m_pagePanelHeight != px) {
+        m_pagePanelHeight = px;
+        QSettings().setValue(QStringLiteral("pagePanelHeight"), px);
+        emit pagePanelHeightChanged();
+    }
+}
+
+QString KeyboardController::whisperModelPath() const { return m_whisperModelPath; }
+
+void KeyboardController::setWhisperModelPath(const QString &path)
+{
+    if (m_whisperModelPath != path) {
+        m_whisperModelPath = path;
+        QSettings().setValue(QStringLiteral("whisperModelPath"), path);
+        emit whisperModelPathChanged();
+    }
+}
+
+void KeyboardController::browseWhisperModel()
+{
+    QString startDir = QFileInfo(m_whisperModelPath).path();
+    QString path = QFileDialog::getOpenFileName(nullptr,
+        QStringLiteral("Select Whisper Model"), startDir,
+        QStringLiteral("Model files (*.bin);;All files (*)"));
+    if (!path.isEmpty())
+        setWhisperModelPath(path);
+}
+
+// ---------------------------------------------------------------------------
+// Voice typing
+// ---------------------------------------------------------------------------
+bool KeyboardController::voiceRecording() const { return m_voiceRecording; }
+
+void KeyboardController::toggleVoiceTyping()
+{
+    if (m_voiceRecording) {
+        // Stop recording
+        if (m_recordProcess) {
+            m_recordProcess->terminate();
+            // startTranscription() will be called when the process finishes
+        }
+        m_voiceRecording = false;
+        emit voiceRecordingChanged();
+    } else {
+        // Start recording
+        m_voiceTempFile = QDir::tempPath() + QStringLiteral("/osk_voice.wav");
+
+        m_recordProcess = new QProcess(this);
+        connect(m_recordProcess, &QProcess::finished, this, [this]() {
+            m_recordProcess->deleteLater();
+            m_recordProcess = nullptr;
+            startTranscription();
+        });
+
+        m_recordProcess->start(QStringLiteral("pw-record"),
+            {QStringLiteral("--rate=16000"),
+             QStringLiteral("--channels=1"),
+             QStringLiteral("--format=s16"),
+             m_voiceTempFile});
+
+        if (!m_recordProcess->waitForStarted(2000)) {
+            qWarning("Failed to start pw-record");
+            m_recordProcess->deleteLater();
+            m_recordProcess = nullptr;
+            return;
+        }
+
+        m_voiceRecording = true;
+        emit voiceRecordingChanged();
+    }
+}
+
+void KeyboardController::startTranscription()
+{
+    if (m_voiceTempFile.isEmpty()) return;
+
+    m_transcribeProcess = new QProcess(this);
+    connect(m_transcribeProcess, &QProcess::finished, this, [this]() {
+        QString output = QString::fromUtf8(m_transcribeProcess->readAllStandardOutput()).trimmed();
+        m_transcribeProcess->deleteLater();
+        m_transcribeProcess = nullptr;
+
+        // Clean up temp file
+        QFile::remove(m_voiceTempFile);
+        m_voiceTempFile.clear();
+
+        if (!output.isEmpty()) {
+            QDBusInterface klipper(QStringLiteral("org.kde.klipper"),
+                                   QStringLiteral("/klipper"),
+                                   QStringLiteral("org.kde.klipper.klipper"));
+            klipper.call(QStringLiteral("setClipboardContents"), output);
+            m_savedWindowIsTerminal = isActiveWindowTerminal();
+            QTimer::singleShot(50, this, [this]() { sendPaste(); });
+        }
+    });
+
+    m_transcribeProcess->start(QStringLiteral("whisper-cli"),
+        {QStringLiteral("-m"), m_whisperModelPath,
+         QStringLiteral("-nt"),
+         QStringLiteral("-np"),
+         QStringLiteral("-f"), m_voiceTempFile});
+
+    if (!m_transcribeProcess->waitForStarted(2000)) {
+        qWarning("Failed to start whisper-cli");
+        m_transcribeProcess->deleteLater();
+        m_transcribeProcess = nullptr;
+        QFile::remove(m_voiceTempFile);
+        m_voiceTempFile.clear();
+    }
+}
+
+
+bool KeyboardController::isActiveWindowTerminal()
+{
+    // Terminal class names that use Ctrl+Shift+V for paste.
+    // Matched against the end of the class (e.g. "org.kde.konsole" matches "konsole").
+    static const QStringList terminals = {
+        QStringLiteral("konsole"),
+        QStringLiteral("alacritty"),
+        QStringLiteral("kitty"),
+        QStringLiteral("foot"),
+        QStringLiteral("xterm"),
+        QStringLiteral("gnome-terminal-server"),
+        QStringLiteral("terminator"),
+        QStringLiteral("tilix"),
+        QStringLiteral("wezterm"),
+        QStringLiteral("st"),
+        QStringLiteral("urxvt"),
+        QStringLiteral("yakuake"),
+    };
+    QProcess proc;
+    proc.start(QStringLiteral("kdotool"),
+               {QStringLiteral("getactivewindow"), QStringLiteral("getwindowclassname")});
+    if (proc.waitForFinished(200)) {
+        QString resClass = QString::fromUtf8(proc.readAllStandardOutput()).trimmed().toLower();
+        for (const QString &term : terminals) {
+            if (resClass == term || resClass.endsWith(QLatin1Char('.') + term))
+                return true;
+        }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// New settings
+// ---------------------------------------------------------------------------
+qreal KeyboardController::opacity() const { return m_opacity; }
+void KeyboardController::setOpacity(qreal value)
+{
+    value = qBound(0.1, value, 1.0);
+    if (qFuzzyCompare(m_opacity, value)) return;
+    m_opacity = value;
+    QSettings().setValue(QStringLiteral("opacity"), value);
+    emit opacityChanged();
+}
+
+int KeyboardController::fontSize() const { return m_fontSize; }
+void KeyboardController::setFontSize(int px)
+{
+    px = qBound(8, px, 28);
+    if (m_fontSize == px) return;
+    m_fontSize = px;
+    QSettings().setValue(QStringLiteral("fontSize"), px);
+    emit fontSizeChanged();
+}
+
+int KeyboardController::keyRadius() const { return m_keyRadius; }
+void KeyboardController::setKeyRadius(int px)
+{
+    px = qBound(0, px, 20);
+    if (m_keyRadius == px) return;
+    m_keyRadius = px;
+    QSettings().setValue(QStringLiteral("keyRadius"), px);
+    emit keyRadiusChanged();
+}
+
+int KeyboardController::autoHideDelay() const { return m_autoHideDelay; }
+void KeyboardController::setAutoHideDelay(int seconds)
+{
+    seconds = qBound(0, seconds, 300);
+    if (m_autoHideDelay == seconds) return;
+    m_autoHideDelay = seconds;
+    QSettings().setValue(QStringLiteral("autoHideDelay"), seconds);
+    resetAutoHideTimer();
+    emit autoHideDelayChanged();
+}
+
+bool KeyboardController::soundFeedback() const { return m_soundFeedback; }
+void KeyboardController::setSoundFeedback(bool enabled)
+{
+    if (m_soundFeedback == enabled) return;
+    m_soundFeedback = enabled;
+    QSettings().setValue(QStringLiteral("soundFeedback"), enabled);
+    emit soundFeedbackChanged();
+}
+
+bool KeyboardController::closeOnPaste() const { return m_closeOnPaste; }
+void KeyboardController::setCloseOnPaste(bool enabled)
+{
+    if (m_closeOnPaste == enabled) return;
+    m_closeOnPaste = enabled;
+    QSettings().setValue(QStringLiteral("closeOnPaste"), enabled);
+    emit closeOnPasteChanged();
+}
+
+bool KeyboardController::closeOnInsertShortcut() const { return m_closeOnInsertShortcut; }
+void KeyboardController::setCloseOnInsertShortcut(bool enabled)
+{
+    if (m_closeOnInsertShortcut == enabled) return;
+    m_closeOnInsertShortcut = enabled;
+    QSettings().setValue(QStringLiteral("closeOnInsertShortcut"), enabled);
+    emit closeOnInsertShortcutChanged();
+}
+
+int KeyboardController::stickyPosition() const { return m_stickyPosition; }
+void KeyboardController::setStickyPosition(int pos)
+{
+    pos = qBound(0, pos, 2);
+    if (m_stickyPosition == pos) return;
+    m_stickyPosition = pos;
+    QSettings().setValue(QStringLiteral("stickyPosition"), pos);
+    emit stickyPositionChanged();
+}
+
+int KeyboardController::keySpacing() const { return m_keySpacing; }
+void KeyboardController::setKeySpacing(int px)
+{
+    px = qBound(0, px, 10);
+    if (m_keySpacing == px) return;
+    m_keySpacing = px;
+    QSettings().setValue(QStringLiteral("keySpacing"), px);
+    emit keySpacingChanged();
+}
+
+bool KeyboardController::compactMode() const { return m_compactMode; }
+void KeyboardController::setCompactMode(bool enabled)
+{
+    if (m_compactMode == enabled) return;
+    m_compactMode = enabled;
+    QSettings().setValue(QStringLiteral("compactMode"), enabled);
+    emit compactModeChanged();
+}
+
+bool KeyboardController::numpadVisible() const { return m_numpadVisible; }
+void KeyboardController::setNumpadVisible(bool visible)
+{
+    if (m_numpadVisible == visible) return;
+    m_numpadVisible = visible;
+    QSettings().setValue(QStringLiteral("numpadVisible"), visible);
+    emit numpadVisibleChanged();
+}
+
+bool KeyboardController::autostartEnabled() const { return m_autostartEnabled; }
+void KeyboardController::setAutostartEnabled(bool enabled)
+{
+    if (m_autostartEnabled == enabled) return;
+
+    QString destPath = autostartFilePath();
+    if (enabled) {
+        QDir().mkpath(QFileInfo(destPath).path());
+        QFile f(destPath);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            f.write("[Desktop Entry]\n"
+                    "Type=Application\n"
+                    "Name=OSK\n"
+                    "Exec=" + QCoreApplication::applicationFilePath().toUtf8() + "\n"
+                    "Icon=input-keyboard\n"
+                    "X-GNOME-Autostart-enabled=true\n");
+            f.close();
+        }
+    } else {
+        QFile::remove(destPath);
+    }
+
+    m_autostartEnabled = enabled;
+    emit autostartEnabledChanged();
+}
+
+QString KeyboardController::globalShortcut() const { return m_globalShortcut; }
+void KeyboardController::setGlobalShortcut(const QString &shortcut)
+{
+    if (m_globalShortcut == shortcut) return;
+    QKeySequence seq(shortcut);
+    if (seq.isEmpty()) return;
+    m_globalShortcut = shortcut;
+    QSettings().setValue(QStringLiteral("globalShortcut"), shortcut);
+    if (m_toggleAction)
+        KGlobalAccel::self()->setShortcut(m_toggleAction, {seq});
+    emit globalShortcutChanged();
+}
+
+int KeyboardController::defaultScreen() const { return m_defaultScreen; }
+void KeyboardController::setDefaultScreen(int index)
+{
+    index = qBound(0, index, qMax(0, QGuiApplication::screens().size() - 1));
+    if (m_defaultScreen == index) return;
+    m_defaultScreen = index;
+    QSettings().setValue(QStringLiteral("defaultScreen"), index);
+    emit defaultScreenChanged();
+}
+
+void KeyboardController::setToggleAction(QAction *action)
+{
+    m_toggleAction = action;
+}
+
+void KeyboardController::resetAutoHideTimer()
+{
+    if (m_autoHideDelay > 0) {
+        m_autoHideTimer.setInterval(m_autoHideDelay * 1000);
+        m_autoHideTimer.start();
+    } else {
+        m_autoHideTimer.stop();
+    }
+}
+
+QString KeyboardController::autostartFilePath() const
+{
+    return QDir::homePath() + QStringLiteral("/.config/autostart/osk.desktop");
+}
+
+void KeyboardController::sendPaste()
+{
+    if (!m_vk || !m_vk->isReady()) return;
+
+    // Terminals need Ctrl+Shift+V instead of Ctrl+V.
+    // Use m_savedWindowIsTerminal (captured before opening overlay pages)
+    // so we don't query kdotool when the OSK itself may be the active window.
+    bool useShift = m_savedWindowIsTerminal;
+    m_savedWindowIsTerminal = false;
+
+    if (useShift) m_vk->sendKeyPress(KEY_LEFTSHIFT);
+    m_vk->sendKeyPress(KEY_LEFTCTRL);
+    m_vk->sendKey(KEY_V);
+    m_vk->sendKeyRelease(KEY_LEFTCTRL);
+    if (useShift) m_vk->sendKeyRelease(KEY_LEFTSHIFT);
 }
 
 // ---------------------------------------------------------------------------
@@ -301,17 +725,28 @@ void KeyboardController::insertClipboardEntry(const QString &text)
 {
     if (text.isEmpty()) return;
 
-    QGuiApplication::clipboard()->setText(text);
+    // Tell Klipper to select this entry (moves it to top of its history)
+    QDBusInterface klipper(QStringLiteral("org.kde.klipper"),
+                           QStringLiteral("/klipper"),
+                           QStringLiteral("org.kde.klipper.klipper"));
+    klipper.call(QStringLiteral("setClipboardContents"), text);
 
-    // Close the clipboard page (this also restores the previous window)
-    setClipboardPageVisible(false);
+    // Update local list immediately
+    m_clipboardHistory.removeAll(text);
+    m_clipboardHistory.prepend(text);
+    emit clipboardHistoryChanged();
 
-    // Give the window manager time to activate the previous window before pasting
+    // Restore focus to the previous window so paste lands in the right place
+    restoreActiveWindow();
+    m_textInputMode = false;
+
+    if (m_closeOnPaste) {
+        setClipboardPageVisible(false);
+    }
+
+    // Paste via Ctrl+V after the window manager restores focus.
     QTimer::singleShot(150, this, [this]() {
-        if (!m_vk || !m_vk->isReady()) return;
-        m_vk->sendKeyPress(KEY_LEFTCTRL);
-        m_vk->sendKey(KEY_V);
-        m_vk->sendKeyRelease(KEY_LEFTCTRL);
+        sendPaste();
     });
 }
 
@@ -351,6 +786,28 @@ void KeyboardController::removeShortcut(int index)
     emit shortcutsChanged();
 }
 
+void KeyboardController::insertShortcutExpansion(int index)
+{
+    if (index < 0 || index >= m_shortcuts.size()) return;
+    QVariantMap entry = m_shortcuts.at(index).toMap();
+    QString expansion = entry.value(QStringLiteral("expansion")).toString();
+    if (expansion.isEmpty()) return;
+
+    if (m_closeOnInsertShortcut) {
+        setShortcutPageVisible(false);
+    }
+
+    // Set clipboard and paste via Ctrl+V for reliable insertion
+    QDBusInterface klipper(QStringLiteral("org.kde.klipper"),
+                           QStringLiteral("/klipper"),
+                           QStringLiteral("org.kde.klipper.klipper"));
+    klipper.call(QStringLiteral("setClipboardContents"), expansion);
+
+    QTimer::singleShot(150, this, [this]() {
+        sendPaste();
+    });
+}
+
 void KeyboardController::saveShortcuts()
 {
     QSettings().setValue(QStringLiteral("shortcuts"), m_shortcuts);
@@ -362,6 +819,8 @@ void KeyboardController::saveShortcuts()
 void KeyboardController::setWindow(QQuickWindow *window)
 {
     m_window = window;
+    if (m_window && !m_pendingRegion.isEmpty())
+        m_window->setMask(m_pendingRegion);
 }
 
 void KeyboardController::setLayerWindow(LayerShellQt::Window *lsw)
@@ -406,6 +865,10 @@ void KeyboardController::pressCtrlCombo(int keyCode)
 // ---------------------------------------------------------------------------
 void KeyboardController::pressKey(int keyCode)
 {
+    resetAutoHideTimer();
+    if (m_soundFeedback)
+        QApplication::beep();
+
     // Route to QML text fields when a dialog/filter is focused
     if (m_textInputMode && m_window) {
         Qt::KeyboardModifiers mods = Qt::NoModifier;
@@ -503,14 +966,17 @@ void KeyboardController::checkShortcutExpansion()
         m_typeBuffer.clear();
         m_bufferTimer.stop();
 
-        // Set clipboard, then defer the paste so the Wayland event loop
-        // can process the data offer before Ctrl+V is sent
-        QGuiApplication::clipboard()->setText(expansion);
+        // Set clipboard and paste for reliable insertion
+        QDBusInterface klipper(QStringLiteral("org.kde.klipper"),
+                               QStringLiteral("/klipper"),
+                               QStringLiteral("org.kde.klipper.klipper"));
+        klipper.call(QStringLiteral("setClipboardContents"), expansion);
+
+        // Detect terminal now while the target window is still focused
+        m_savedWindowIsTerminal = isActiveWindowTerminal();
+
         QTimer::singleShot(50, this, [this]() {
-            if (!m_vk || !m_vk->isReady()) return;
-            m_vk->sendKeyPress(KEY_LEFTCTRL);
-            m_vk->sendKey(KEY_V);
-            m_vk->sendKeyRelease(KEY_LEFTCTRL);
+            sendPaste();
         });
         break;
     }
@@ -632,8 +1098,9 @@ void KeyboardController::closeApp()
 
 void KeyboardController::updateInputRegion(int x, int y, int w, int h)
 {
+    m_pendingRegion = QRegion(x, y, w, h);
     if (!m_window) return;
-    m_window->setMask(QRegion(x, y, w, h));
+    m_window->setMask(m_pendingRegion);
 }
 
 // ---------------------------------------------------------------------------
@@ -641,6 +1108,10 @@ void KeyboardController::updateInputRegion(int x, int y, int w, int h)
 // ---------------------------------------------------------------------------
 void KeyboardController::saveActiveWindow()
 {
+    // Capture whether the focused window is a terminal before opening overlays,
+    // so sendPaste() can use the right key combo later.
+    m_savedWindowIsTerminal = isActiveWindowTerminal();
+
     QDBusMessage msg = QDBusMessage::createMethodCall(
         QStringLiteral("org.kde.KWin"),
         QStringLiteral("/KWin"),

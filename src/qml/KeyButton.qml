@@ -34,15 +34,16 @@ AbstractButton {
     background: Rectangle {
         radius: Theme.keyRadius
         color: {
-            if (root.pressed || rightClickArea.pressed) return Theme.keyBackgroundPressed;
-            if (root.isModifier && root.modifierLocked)
-                return "#c0392b";
+            if ((root.pressed || rightClickArea.pressed) && Theme.keyPressEnabled)
+                return Theme.keyBackgroundPressed;
+            if (root.isModifier && root.modifierLocked && Theme.lockedKeyEnabled)
+                return Theme.keyBackgroundLocked;
             if (root.isModifier && root.modifierActive)
                 return Theme.keyBackgroundModActive;
             return Theme.keyBackground;
         }
         border.width: KeyboardController.keyBorderEnabled ? 1 : 0
-        border.color: Theme.keyTextDim
+        border.color: Theme.keyBorderColor
 
         Behavior on color { ColorAnimation { duration: 80 } }
     }

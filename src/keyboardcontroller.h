@@ -1,11 +1,13 @@
 #pragma once
 
 #include <QObject>
+#include <QProcess>
 #include <QRegion>
 #include <QStringList>
 #include <QTimer>
 #include <QVariantList>
 
+class QAction;
 class VirtualKeyboard;
 class QQuickWindow;
 namespace LayerShellQt { class Window; }
@@ -36,8 +38,36 @@ class KeyboardController : public QObject
     Q_PROPERTY(bool clipboardPageVisible READ clipboardPageVisible WRITE setClipboardPageVisible NOTIFY clipboardPageVisibleChanged)
     Q_PROPERTY(QStringList clipboardHistory READ clipboardHistory NOTIFY clipboardHistoryChanged)
     Q_PROPERTY(bool keyBorderEnabled READ keyBorderEnabled WRITE setKeyBorderEnabled NOTIFY keyBorderEnabledChanged)
+    Q_PROPERTY(QString keyPressColor READ keyPressColor WRITE setKeyPressColor NOTIFY keyPressColorChanged)
+    Q_PROPERTY(QString lockedKeyColor READ lockedKeyColor WRITE setLockedKeyColor NOTIFY lockedKeyColorChanged)
+    Q_PROPERTY(QString keyBorderColor READ keyBorderColor WRITE setKeyBorderColor NOTIFY keyBorderColorChanged)
     Q_PROPERTY(int panelX READ panelX WRITE setPanelX NOTIFY panelXChanged)
     Q_PROPERTY(int panelY READ panelY WRITE setPanelY NOTIFY panelYChanged)
+    Q_PROPERTY(int pagePanelHeight READ pagePanelHeight WRITE setPagePanelHeight NOTIFY pagePanelHeightChanged)
+    Q_PROPERTY(bool voiceRecording READ voiceRecording NOTIFY voiceRecordingChanged)
+    Q_PROPERTY(QString whisperModelPath READ whisperModelPath WRITE setWhisperModelPath NOTIFY whisperModelPathChanged)
+
+    // Appearance
+    Q_PROPERTY(qreal opacity READ opacity WRITE setOpacity NOTIFY opacityChanged)
+    Q_PROPERTY(int fontSize READ fontSize WRITE setFontSize NOTIFY fontSizeChanged)
+    Q_PROPERTY(int keyRadius READ keyRadius WRITE setKeyRadius NOTIFY keyRadiusChanged)
+
+    // Behavior
+    Q_PROPERTY(int autoHideDelay READ autoHideDelay WRITE setAutoHideDelay NOTIFY autoHideDelayChanged)
+    Q_PROPERTY(bool soundFeedback READ soundFeedback WRITE setSoundFeedback NOTIFY soundFeedbackChanged)
+    Q_PROPERTY(bool closeOnPaste READ closeOnPaste WRITE setCloseOnPaste NOTIFY closeOnPasteChanged)
+    Q_PROPERTY(bool closeOnInsertShortcut READ closeOnInsertShortcut WRITE setCloseOnInsertShortcut NOTIFY closeOnInsertShortcutChanged)
+
+    // Layout
+    Q_PROPERTY(int stickyPosition READ stickyPosition WRITE setStickyPosition NOTIFY stickyPositionChanged)
+    Q_PROPERTY(int keySpacing READ keySpacing WRITE setKeySpacing NOTIFY keySpacingChanged)
+    Q_PROPERTY(bool compactMode READ compactMode WRITE setCompactMode NOTIFY compactModeChanged)
+    Q_PROPERTY(bool numpadVisible READ numpadVisible WRITE setNumpadVisible NOTIFY numpadVisibleChanged)
+
+    // Functional
+    Q_PROPERTY(bool autostartEnabled READ autostartEnabled WRITE setAutostartEnabled NOTIFY autostartEnabledChanged)
+    Q_PROPERTY(QString globalShortcut READ globalShortcut WRITE setGlobalShortcut NOTIFY globalShortcutChanged)
+    Q_PROPERTY(int defaultScreen READ defaultScreen WRITE setDefaultScreen NOTIFY defaultScreenChanged)
 
 public:
     explicit KeyboardController(QObject *parent = nullptr);
@@ -75,6 +105,7 @@ public:
     Q_INVOKABLE void addShortcut(const QString &shortcut, const QString &expansion);
     Q_INVOKABLE void editShortcut(int index, const QString &shortcut, const QString &expansion);
     Q_INVOKABLE void removeShortcut(int index);
+    Q_INVOKABLE void insertShortcutExpansion(int index);
 
     Q_INVOKABLE void setShortcutDialogOpen(bool open);
     Q_INVOKABLE void setTextInputMode(bool mode);
@@ -96,11 +127,67 @@ public:
     bool keyBorderEnabled() const;
     Q_INVOKABLE void setKeyBorderEnabled(bool enabled);
 
+    QString keyPressColor() const;
+    Q_INVOKABLE void setKeyPressColor(const QString &color);
+
+    QString lockedKeyColor() const;
+    Q_INVOKABLE void setLockedKeyColor(const QString &color);
+
+    QString keyBorderColor() const;
+    Q_INVOKABLE void setKeyBorderColor(const QString &color);
+
     int panelX() const;
     Q_INVOKABLE void setPanelX(int x);
     int panelY() const;
     Q_INVOKABLE void setPanelY(int y);
     Q_INVOKABLE void savePanelPosition(int x, int y);
+
+    int pagePanelHeight() const;
+    Q_INVOKABLE void setPagePanelHeight(int px);
+
+    bool voiceRecording() const;
+    Q_INVOKABLE void toggleVoiceTyping();
+
+    QString whisperModelPath() const;
+    Q_INVOKABLE void setWhisperModelPath(const QString &path);
+    Q_INVOKABLE void browseWhisperModel();
+
+    // Appearance
+    qreal opacity() const;
+    Q_INVOKABLE void setOpacity(qreal value);
+    int fontSize() const;
+    Q_INVOKABLE void setFontSize(int px);
+    int keyRadius() const;
+    Q_INVOKABLE void setKeyRadius(int px);
+
+    // Behavior
+    int autoHideDelay() const;
+    Q_INVOKABLE void setAutoHideDelay(int seconds);
+    bool soundFeedback() const;
+    Q_INVOKABLE void setSoundFeedback(bool enabled);
+    bool closeOnPaste() const;
+    Q_INVOKABLE void setCloseOnPaste(bool enabled);
+    bool closeOnInsertShortcut() const;
+    Q_INVOKABLE void setCloseOnInsertShortcut(bool enabled);
+    // Layout
+    int stickyPosition() const;
+    Q_INVOKABLE void setStickyPosition(int pos);
+    int keySpacing() const;
+    Q_INVOKABLE void setKeySpacing(int px);
+    bool compactMode() const;
+    Q_INVOKABLE void setCompactMode(bool enabled);
+    bool numpadVisible() const;
+    Q_INVOKABLE void setNumpadVisible(bool visible);
+
+    // Functional
+    bool autostartEnabled() const;
+    Q_INVOKABLE void setAutostartEnabled(bool enabled);
+    QString globalShortcut() const;
+    Q_INVOKABLE void setGlobalShortcut(const QString &shortcut);
+    int defaultScreen() const;
+    Q_INVOKABLE void setDefaultScreen(int index);
+
+    void setToggleAction(QAction *action);
 
     Q_INVOKABLE void pressKey(int keyCode);
     Q_INVOKABLE void toggleShift();
@@ -134,8 +221,28 @@ signals:
     void clipboardPageVisibleChanged();
     void clipboardHistoryChanged();
     void keyBorderEnabledChanged();
+    void keyPressColorChanged();
+    void lockedKeyColorChanged();
+    void keyBorderColorChanged();
     void panelXChanged();
     void panelYChanged();
+    void pagePanelHeightChanged();
+    void voiceRecordingChanged();
+    void whisperModelPathChanged();
+    void opacityChanged();
+    void fontSizeChanged();
+    void keyRadiusChanged();
+    void autoHideDelayChanged();
+    void soundFeedbackChanged();
+    void closeOnPasteChanged();
+    void closeOnInsertShortcutChanged();
+    void stickyPositionChanged();
+    void keySpacingChanged();
+    void compactModeChanged();
+    void numpadVisibleChanged();
+    void autostartEnabledChanged();
+    void globalShortcutChanged();
+    void defaultScreenChanged();
 
 private:
     void applyModifiers();
@@ -146,10 +253,16 @@ private:
     void saveActiveWindow();
     void restoreActiveWindow();
     static QChar evdevToChar(int keyCode, bool shift);
+    void sendPaste();
+    bool isActiveWindowTerminal();
+    void startTranscription();
+    void resetAutoHideTimer();
+    QString autostartFilePath() const;
 
     VirtualKeyboard *m_vk = nullptr;
     QQuickWindow *m_window = nullptr;
     LayerShellQt::Window *m_layerWindow = nullptr;
+    QRegion m_pendingRegion;
 
     bool m_shift = false;
     bool m_ctrl = false;
@@ -171,14 +284,44 @@ private:
     bool m_sizePopupVisible = false;
     bool m_clipboardPageVisible = false;
     bool m_keyBorderEnabled = false;
+    QString m_keyPressColor;
+    QString m_lockedKeyColor;
+    QString m_keyBorderColor;
     int m_panelX = -1;
     int m_panelY = -1;
+    int m_pagePanelHeight = 250;
     bool m_textInputMode = false;
     QString m_savedWindowId;
+    bool m_savedWindowIsTerminal = false;
     QStringList m_clipboardHistory;
     QVariantList m_shortcuts;
 
     // Auto-expansion buffer
     QString m_typeBuffer;
     QTimer m_bufferTimer;
+
+    // Voice typing
+    QProcess *m_recordProcess = nullptr;
+    QProcess *m_transcribeProcess = nullptr;
+    bool m_voiceRecording = false;
+    QString m_voiceTempFile;
+    QString m_whisperModelPath;
+
+    // New settings
+    qreal m_opacity = 1.0;
+    int m_fontSize = 14;
+    int m_keyRadius = 6;
+    int m_autoHideDelay = 0;
+    bool m_soundFeedback = false;
+    bool m_closeOnPaste = false;
+    bool m_closeOnInsertShortcut = false;
+    int m_stickyPosition = 0;
+    int m_keySpacing = 3;
+    bool m_compactMode = false;
+    bool m_numpadVisible = false;
+    bool m_autostartEnabled = false;
+    QString m_globalShortcut = QStringLiteral("Meta+K");
+    int m_defaultScreen = 0;
+    QTimer m_autoHideTimer;
+    QAction *m_toggleAction = nullptr;
 };

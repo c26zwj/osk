@@ -4,7 +4,12 @@ Rectangle {
     id: clipboardRoot
     visible: KeyboardController.clipboardPageVisible
     color: Theme.keyboardBackground
-    onVisibleChanged: if (visible) filterInput.forceActiveFocus()
+    onVisibleChanged: {
+        if (visible) {
+            filterInput.text = "";
+            filterInput.forceActiveFocus();
+        }
+    }
 
     property string filterText: ""
 
@@ -58,7 +63,10 @@ Rectangle {
 
             TextEdit {
                 id: filterInput
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: clearBtn.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
                 anchors.margins: 6
                 color: Theme.keyText
                 selectionColor: Theme.keyBackgroundPressed
@@ -71,10 +79,32 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.leftMargin: 6
                 anchors.verticalCenter: parent.verticalCenter
-                visible: filterInput.text.length === 0 && !filterInput.activeFocus
-                text: "Filter..."
+                visible: filterInput.text.length === 0
+                text: "Filter"
                 color: Theme.keyTextDim
                 font.pixelSize: 13
+            }
+
+            Rectangle {
+                id: clearBtn
+                anchors.right: parent.right
+                anchors.rightMargin: 3
+                anchors.verticalCenter: parent.verticalCenter
+                width: 22; height: 22; radius: 3
+                visible: filterInput.text.length > 0
+                color: clearMa.pressed ? Theme.keyBackgroundPressed : "transparent"
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "\u00d7"
+                    color: Theme.keyText
+                    font.pixelSize: 16
+                }
+
+                MouseArea {
+                    id: clearMa; anchors.fill: parent
+                    onClicked: { filterInput.text = ""; filterInput.forceActiveFocus(); }
+                }
             }
         }
 
@@ -139,8 +169,8 @@ Rectangle {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 onClicked: {
-                                    filterInput.text = "";
-                                    KeyboardController.insertClipboardEntry(modelData);
+                                    var entry = modelData;
+                                    KeyboardController.insertClipboardEntry(entry);
                                 }
                             }
                         }

@@ -3,8 +3,9 @@ import QtQuick
 Column {
     spacing: Theme.keySpacing
 
-    // Row 0: Esc + Function keys + Del
+    // Row 0: Esc + Function keys + Del (hidden in compact mode)
     Row {
+        visible: !KeyboardController.compactMode
         spacing: Theme.keySpacing
         anchors.horizontalCenter: parent.horizontalCenter
 

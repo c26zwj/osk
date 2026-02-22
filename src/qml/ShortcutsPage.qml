@@ -115,6 +115,16 @@ Rectangle {
                                     spacing: 2
 
                                     Rectangle {
+                                        width: 36; height: 22; radius: 3
+                                        color: insertItemMa.pressed ? Theme.keyBackgroundPressed : Qt.lighter(Theme.keyBackground, 1.3)
+                                        Text { anchors.centerIn: parent; text: "Insert"; color: Theme.keyText; font.pixelSize: 9 }
+                                        MouseArea {
+                                            id: insertItemMa; anchors.fill: parent
+                                            onClicked: KeyboardController.insertShortcutExpansion(index)
+                                        }
+                                    }
+
+                                    Rectangle {
                                         width: 28; height: 22; radius: 3
                                         color: editItemMa.pressed ? Theme.keyBackgroundPressed : Qt.lighter(Theme.keyBackground, 1.3)
                                         Text { anchors.centerIn: parent; text: "Edit"; color: Theme.keyText; font.pixelSize: 9 }

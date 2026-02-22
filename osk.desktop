@@ -1,11 +1,9 @@
-#!/usr/bin/env xdg-open
+
 [Desktop Entry]
 Type=Application
-Name=On-Screen Keyboard
-GenericName=Virtual Keyboard
+Name=OSK
+GenericName=On-Screen Keyboard
 Comment=On-screen keyboard for KDE Plasma Wayland
-Exec=osk
+Exec=/home/charles/Desktop/osk/build/osk
 Icon=input-keyboard
-Categories=Utility;Accessibility;
-Keywords=keyboard;virtual;osk;accessibility;
-NoDisplay=true
+Categories=Utility;

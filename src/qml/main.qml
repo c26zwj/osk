@@ -9,38 +9,75 @@ Window {
     property bool anyPageVisible: KeyboardController.shortcutPageVisible
                                   || KeyboardController.clipboardPageVisible
                                   || KeyboardController.settingsVisible
-    property int pagePanelHeight: 250
+    property int pagePanelHeight: KeyboardController.pagePanelHeight
 
     function updateRegion() {
         var ry = keyboardPanel.y
         var rh = keyboardPanel.height
         if (anyPageVisible) {
-            ry = pagePanel.y
-            rh = keyboardPanel.y + keyboardPanel.height - pagePanel.y
+            ry = Math.min(keyboardPanel.y, pagePanel.y)
+            var bottom = Math.max(keyboardPanel.y + keyboardPanel.height,
+                                  pagePanel.y + pagePanel.height)
+            rh = bottom - ry
         }
         KeyboardController.updateInputRegion(keyboardPanel.x, ry, keyboardPanel.width, rh)
     }
 
     onAnyPageVisibleChanged: updateRegion()
 
-    // Extension panel above the keyboard for shortcuts/clipboard/settings
+    // Whether the page panel should appear below the keyboard (sticky top)
+    property bool panelBelow: KeyboardController.stickyPosition === 1
+
+    // Extension panel above (or below when sticky top) the keyboard
     Rectangle {
         id: pagePanel
         visible: anyPageVisible
         x: keyboardPanel.x
-        y: keyboardPanel.y - pagePanelHeight
+        y: panelBelow ? keyboardPanel.y + keyboardPanel.height
+                      : keyboardPanel.y - pagePanelHeight
         width: keyboardPanel.width
         height: pagePanelHeight
         color: Theme.keyboardBackground
+        opacity: KeyboardController.opacity
         radius: 6
 
-        // Cover bottom corners so it connects seamlessly to keyboard below
+        // Cover corners so it connects seamlessly to keyboard
         Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.bottom: parent.bottom
+            anchors.top: panelBelow ? parent.top : undefined
+            anchors.bottom: panelBelow ? undefined : parent.bottom
             height: 6
             color: parent.color
+        }
+
+        // Resize handle (at the edge away from keyboard)
+        Rectangle {
+            anchors.top: panelBelow ? undefined : parent.top
+            anchors.bottom: panelBelow ? parent.bottom : undefined
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 6
+            color: "transparent"
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.SizeVerCursor
+                property real pressY
+                property real startHeight
+
+                onPressed: (mouse) => {
+                    var scenePos = mapToItem(null, mouse.x, mouse.y)
+                    pressY = scenePos.y
+                    startHeight = pagePanelHeight
+                }
+                onPositionChanged: (mouse) => {
+                    var scenePos = mapToItem(null, mouse.x, mouse.y)
+                    var delta = scenePos.y - pressY
+                    var newH = Math.round(startHeight + (panelBelow ? delta : -delta))
+                    KeyboardController.setPagePanelHeight(newH)
+                }
+            }
         }
 
         // Close button
@@ -90,11 +127,26 @@ Window {
     // The keyboard panel, positioned freely inside the fullscreen overlay
     Rectangle {
         id: keyboardPanel
-        x: KeyboardController.panelX >= 0 ? KeyboardController.panelX : 200
-        y: KeyboardController.panelY >= 0 ? KeyboardController.panelY : Math.max(0, (rootWindow.height || 800) - 320)
-        width: KeyboardController.keyboardWidth
-        height: KeyboardController.keyboardHeight
+        x: KeyboardController.stickyPosition !== 0
+           ? Math.round((rootWindow.width - width) / 2)
+           : KeyboardController.panelX >= 0 ? KeyboardController.panelX : 200
+        y: KeyboardController.stickyPosition === 1 ? 0
+         : KeyboardController.stickyPosition === 2 ? Math.max(0, rootWindow.height - height)
+         : KeyboardController.panelY >= 0 ? KeyboardController.panelY
+            : Math.max(0, (rootWindow.height || 800) - 320)
+        readonly property real stickyScale: KeyboardController.stickyPosition !== 0 && KeyboardController.keyboardWidth > 0
+            ? (rootWindow.width * 2 / 3) / KeyboardController.keyboardWidth : 1
+        width: KeyboardController.stickyPosition !== 0
+               ? Math.round(rootWindow.width * 2 / 3)
+               : KeyboardController.keyboardWidth
+        height: {
+            var h = KeyboardController.compactMode
+                    ? Math.round(KeyboardController.keyboardHeight * 5 / 6)
+                    : KeyboardController.keyboardHeight
+            return Math.round(h * stickyScale)
+        }
         color: Theme.keyboardBackground
+        opacity: KeyboardController.opacity
         radius: 6
 
         // Update input region whenever position or size changes
@@ -110,7 +162,7 @@ Window {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 20
+            height: 27
             color: Theme.dragBarBackground
             radius: anyPageVisible ? 0 : 6
 
@@ -151,9 +203,10 @@ Window {
                     panelStartY = keyboardPanel.y
                 }
                 onPositionChanged: (mouse) => {
+                    if (KeyboardController.stickyPosition !== 0) return
+
                     var scenePos = mapToItem(null, mouse.x, mouse.y)
                     var newX = panelStartX + (scenePos.x - pressPos.x)
-                    var newY = Math.max(0, panelStartY + (scenePos.y - pressPos.y))
                     var panelCenter = newX + keyboardPanel.width / 2
 
                     if (panelCenter > rootWindow.width && KeyboardController.switchScreen(1)) {
@@ -167,9 +220,12 @@ Window {
                     }
 
                     keyboardPanel.x = Math.max(0, newX)
+                    var newY = Math.max(0, panelStartY + (scenePos.y - pressPos.y))
                     keyboardPanel.y = newY
                 }
-                onReleased: KeyboardController.savePanelPosition(keyboardPanel.x, keyboardPanel.y)
+                onReleased: {
+                    KeyboardController.savePanelPosition(keyboardPanel.x, keyboardPanel.y)
+                }
             }
 
             // Control buttons (on top of drag area)
@@ -178,17 +234,96 @@ Window {
                 anchors.right: parent.right
                 anchors.rightMargin: 6
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 3
+                spacing: 4
+
+                // Microphone (compact mode only)
+                Rectangle {
+                    visible: KeyboardController.compactMode
+                    width: 22; height: 22; radius: 4
+                    color: voiceBarMa.containsMouse
+                           ? (KeyboardController.voiceRecording ? "#c0392b" : Theme.keyBackground)
+                           : (KeyboardController.voiceRecording ? "#c0392b" : "transparent")
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\uD83C\uDFA4"
+                        color: KeyboardController.voiceRecording ? "#ffffff" : Theme.keyTextDim
+                        font.pixelSize: 13
+                    }
+                    MouseArea {
+                        id: voiceBarMa; anchors.fill: parent; hoverEnabled: true
+                        onClicked: KeyboardController.toggleVoiceTyping()
+                    }
+                }
+
+                // Compact mode toggle
+                Rectangle {
+                    width: 22; height: 22; radius: 4
+                    color: compactMa.containsMouse
+                           ? (KeyboardController.compactMode ? Theme.keyBackgroundModActive : Theme.keyBackground)
+                           : (KeyboardController.compactMode ? Theme.keyBackgroundModActive : "transparent")
+                    Text {
+                        anchors.centerIn: parent
+                        text: "C"
+                        color: KeyboardController.compactMode ? Theme.keyText : Theme.keyTextDim
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                    MouseArea {
+                        id: compactMa; anchors.fill: parent; hoverEnabled: true
+                        onClicked: KeyboardController.setCompactMode(!KeyboardController.compactMode)
+                    }
+                }
+
+                // Numpad toggle
+                Rectangle {
+                    width: 22; height: 22; radius: 4
+                    color: numpadMa.containsMouse
+                           ? (KeyboardController.numpadVisible ? Theme.keyBackgroundModActive : Theme.keyBackground)
+                           : (KeyboardController.numpadVisible ? Theme.keyBackgroundModActive : "transparent")
+                    Text {
+                        anchors.centerIn: parent
+                        text: "#"
+                        color: KeyboardController.numpadVisible ? Theme.keyText : Theme.keyTextDim
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+                    MouseArea {
+                        id: numpadMa; anchors.fill: parent; hoverEnabled: true
+                        onClicked: KeyboardController.setNumpadVisible(!KeyboardController.numpadVisible)
+                    }
+                }
+
+                // Settings gear
+                Rectangle {
+                    width: 22; height: 22; radius: 4
+                    color: settingsMa.containsMouse
+                           ? (KeyboardController.settingsVisible ? Theme.keyBackgroundModActive : Theme.keyBackground)
+                           : (KeyboardController.settingsVisible ? Theme.keyBackgroundModActive : "transparent")
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2699"
+                        color: KeyboardController.settingsVisible ? Theme.keyText : Theme.keyTextDim
+                        font.pixelSize: 16
+                    }
+                    MouseArea {
+                        id: settingsMa; anchors.fill: parent; hoverEnabled: true
+                        onClicked: {
+                            KeyboardController.setShortcutPageVisible(false)
+                            KeyboardController.setClipboardPageVisible(false)
+                            KeyboardController.setSettingsVisible(!KeyboardController.settingsVisible)
+                        }
+                    }
+                }
 
                 // Minimize to tray
                 Rectangle {
-                    width: 16; height: 16; radius: 3
+                    width: 22; height: 22; radius: 4
                     color: minMa.containsMouse ? Theme.keyBackground : "transparent"
                     Text {
                         anchors.centerIn: parent
                         text: "\u2013"
                         color: Theme.keyTextDim
-                        font.pixelSize: 12
+                        font.pixelSize: 16
                     }
                     MouseArea {
                         id: minMa; anchors.fill: parent; hoverEnabled: true
@@ -198,13 +333,13 @@ Window {
 
                 // Close app
                 Rectangle {
-                    width: 16; height: 16; radius: 3
+                    width: 22; height: 22; radius: 4
                     color: closeMa.containsMouse ? "#c0392b" : "transparent"
                     Text {
                         anchors.centerIn: parent
                         text: "\u2715"
                         color: closeMa.containsMouse ? "#ffffff" : Theme.keyTextDim
-                        font.pixelSize: 10
+                        font.pixelSize: 13
                     }
                     MouseArea {
                         id: closeMa; anchors.fill: parent; hoverEnabled: true
@@ -258,88 +393,30 @@ Window {
             }
         }
 
-        // Right-side button column (aligned with keyboard rows)
-        Column {
-            id: sideButtons
-            anchors.top: dragBar.bottom
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.rightMargin: 3
-            anchors.bottomMargin: 6
-            width: 36
-
-            // Match keyboard scaler proportions (273 total, 3px margins, 42px keys, 3px gaps)
-            property real yScale: height / 273
-            topPadding: Math.round(3 * yScale)
-            spacing: Math.round(3 * yScale)
-
-            Repeater {
-                model: [
-                    { label: "\u2702", action: "cut",      iconColor: "#e06666" },
-                    { label: "\u29c9", action: "copy",     iconColor: "#6fa3d6" },
-                    { label: "\u2398", action: "paste",    iconColor: "#6cc070" },
-                    { label: "Hm",     action: "home",     iconColor: "" },
-                    { label: "End",    action: "end",      iconColor: "" },
-                    { label: "\u2699", action: "settings", iconColor: "" }
-                ]
-
-                Rectangle {
-                    required property var modelData
-                    width: sideButtons.width
-                    height: Math.round(42 * sideButtons.yScale)
-                    radius: 4
-                    color: {
-                        if (sideButtonMa.pressed) return Theme.keyBackgroundPressed;
-                        if (modelData.action === "settings" && KeyboardController.settingsVisible)
-                            return Theme.keyBackgroundModActive;
-                        return Theme.keyBackground;
-                    }
-                    border.width: KeyboardController.keyBorderEnabled ? 1 : 0
-                    border.color: Theme.keyTextDim
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: modelData.label
-                        color: modelData.iconColor || Theme.keyText
-                        font.pixelSize: modelData.label.length > 2 ? 10 : 16
-                    }
-
-                    MouseArea {
-                        id: sideButtonMa
-                        anchors.fill: parent
-                        onClicked: {
-                            if (modelData.action === "cut") KeyboardController.pressCtrlCombo(45)
-                            else if (modelData.action === "copy") KeyboardController.pressCtrlCombo(46)
-                            else if (modelData.action === "paste") KeyboardController.pressCtrlCombo(47)
-                            else if (modelData.action === "home") KeyboardController.pressKey(102)
-                            else if (modelData.action === "end") KeyboardController.pressKey(107)
-                            else if (modelData.action === "settings") {
-                                KeyboardController.setShortcutPageVisible(false)
-                                KeyboardController.setClipboardPageVisible(false)
-                                KeyboardController.setSettingsVisible(!KeyboardController.settingsVisible)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Scaled keyboard content
         Item {
             id: contentArea
             anchors.top: dragBar.bottom
             anchors.left: parent.left
-            anchors.right: sideButtons.left
+            anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.leftMargin: 4
-            anchors.rightMargin: 2
+            anchors.rightMargin: 4
             anchors.bottomMargin: 6
             clip: true
 
             Item {
                 id: scaler
-                width: 656
-                height: 273
+                // Keyboard: 14.5 keys wide + 13 gaps + 2 margins
+                readonly property int kbWidth: 14.5 * Theme.keyHeight + 15 * Theme.keySpacing
+                // Keyboard rows: 6 normal, 5 compact (no function row)
+                readonly property int rowCount: KeyboardController.compactMode ? 5 : 6
+                readonly property int kbHeight: rowCount * Theme.keyHeight + (rowCount + 1) * Theme.keySpacing
+                // Numpad: 4 keys wide + 3 gaps
+                readonly property int numpadWidth: 4 * Theme.keyHeight + 3 * Theme.keySpacing
+                width: kbWidth + Theme.keyHeight
+                       + (KeyboardController.numpadVisible ? Theme.keySpacing + numpadWidth : 0)
+                height: kbHeight
                 transformOrigin: Item.TopLeft
                 transform: Scale {
                     xScale: contentArea.width / scaler.width
@@ -347,7 +424,171 @@ Window {
                 }
 
                 KeyboardLayout {
-                    anchors.fill: parent
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
+                    width: scaler.kbWidth
+                }
+
+                // Right-side button column (inside scaler, uses Theme dimensions)
+                Column {
+                    id: sideButtons
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    x: scaler.kbWidth
+                    width: Theme.keyHeight
+                    spacing: Theme.keySpacing
+                    topPadding: Theme.keySpacing
+
+                    Repeater {
+                        model: [
+                            { action: "cut" },
+                            { action: "copy" },
+                            { action: "paste" },
+                            { action: "home" },
+                            { action: "end" },
+                            { action: "voice" }
+                        ]
+
+                        Rectangle {
+                            required property var modelData
+                            visible: !(KeyboardController.compactMode && modelData.action === "voice")
+                            width: Theme.keyHeight
+                            height: visible ? Theme.keyHeight : 0
+                            radius: Theme.keyRadius
+                            color: {
+                                if (sideButtonMa.pressed && Theme.keyPressEnabled) return Theme.keyBackgroundPressed;
+                                if (modelData.action === "voice" && KeyboardController.voiceRecording)
+                                    return "#c0392b";
+                                return Theme.keyBackground;
+                            }
+                            border.width: KeyboardController.keyBorderEnabled ? 1 : 0
+                            border.color: Theme.keyBorderColor
+
+                            Canvas {
+                                id: iconCanvas
+                                anchors.centerIn: parent
+                                width: 22; height: 22
+                                property color iconColor: (modelData.action === "voice" && KeyboardController.voiceRecording)
+                                                        ? "#ffffff" : Theme.keyText
+                                onIconColorChanged: requestPaint()
+                                onPaint: {
+                                    var ctx = getContext("2d");
+                                    ctx.reset();
+                                    ctx.clearRect(0, 0, width, height);
+                                    var c = iconColor.toString();
+                                    ctx.strokeStyle = c;
+                                    ctx.fillStyle = c;
+                                    ctx.lineWidth = 1.8;
+                                    ctx.lineCap = "round";
+                                    ctx.lineJoin = "round";
+
+                                    if (modelData.action === "cut") {
+                                        ctx.beginPath();
+                                        ctx.arc(6, 16, 3.5, 0, Math.PI * 2);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.arc(16, 16, 3.5, 0, Math.PI * 2);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(7.5, 12.5);
+                                        ctx.lineTo(14.5, 3);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(14.5, 12.5);
+                                        ctx.lineTo(7.5, 3);
+                                        ctx.stroke();
+                                    } else if (modelData.action === "copy") {
+                                        var bg = parent.color.toString();
+                                        ctx.lineWidth = 1.6;
+                                        ctx.strokeRect(1, 5, 12, 15);
+                                        ctx.fillStyle = bg;
+                                        ctx.fillRect(7, 1, 12, 15);
+                                        ctx.fillStyle = c;
+                                        ctx.strokeStyle = c;
+                                        ctx.strokeRect(7, 1, 12, 15);
+                                    } else if (modelData.action === "paste") {
+                                        ctx.lineWidth = 1.6;
+                                        ctx.strokeRect(3, 5, 16, 16);
+                                        ctx.fillRect(7, 2, 8, 5);
+                                        var bg2 = parent.color.toString();
+                                        ctx.fillStyle = bg2;
+                                        ctx.fillRect(9, 3, 4, 3);
+                                        ctx.fillStyle = c;
+                                        ctx.beginPath();
+                                        ctx.moveTo(7, 12); ctx.lineTo(15, 12);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(7, 16); ctx.lineTo(15, 16);
+                                        ctx.stroke();
+                                    } else if (modelData.action === "home") {
+                                        ctx.lineWidth = 2.2;
+                                        ctx.beginPath();
+                                        ctx.moveTo(3, 3); ctx.lineTo(3, 19);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(19, 11); ctx.lineTo(8, 11);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(12, 6); ctx.lineTo(8, 11); ctx.lineTo(12, 16);
+                                        ctx.stroke();
+                                    } else if (modelData.action === "end") {
+                                        ctx.lineWidth = 2.2;
+                                        ctx.beginPath();
+                                        ctx.moveTo(19, 3); ctx.lineTo(19, 19);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(3, 11); ctx.lineTo(14, 11);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(10, 6); ctx.lineTo(14, 11); ctx.lineTo(10, 16);
+                                        ctx.stroke();
+                                    } else if (modelData.action === "voice") {
+                                        ctx.lineWidth = 1.8;
+                                        ctx.beginPath();
+                                        ctx.moveTo(8, 3); ctx.lineTo(8, 11);
+                                        ctx.arc(11, 11, 3, Math.PI, 0, true);
+                                        ctx.lineTo(14, 3);
+                                        ctx.arc(11, 3, 3, 0, Math.PI, true);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(5, 9);
+                                        ctx.quadraticCurveTo(5, 16, 11, 16);
+                                        ctx.quadraticCurveTo(17, 16, 17, 9);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(11, 16); ctx.lineTo(11, 20);
+                                        ctx.stroke();
+                                        ctx.beginPath();
+                                        ctx.moveTo(7, 20); ctx.lineTo(15, 20);
+                                        ctx.stroke();
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                id: sideButtonMa
+                                anchors.fill: parent
+                                onClicked: {
+                                    if (modelData.action === "cut") KeyboardController.pressCtrlCombo(45)
+                                    else if (modelData.action === "copy") KeyboardController.pressCtrlCombo(46)
+                                    else if (modelData.action === "paste") KeyboardController.pressCtrlCombo(47)
+                                    else if (modelData.action === "home") KeyboardController.pressKey(102)
+                                    else if (modelData.action === "end") KeyboardController.pressKey(107)
+                                    else if (modelData.action === "voice") KeyboardController.toggleVoiceTyping()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                NumpadPage {
+                    visible: KeyboardController.numpadVisible
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.topMargin: Theme.keySpacing
+                    width: scaler.numpadWidth
                 }
             }
 

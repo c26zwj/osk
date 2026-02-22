@@ -8,6 +8,7 @@
         <file alias="qml/ShortcutsPage.qml">src/qml/ShortcutsPage.qml</file>
         <file alias="qml/ClipboardPage.qml">src/qml/ClipboardPage.qml</file>
         <file alias="qml/Theme.qml">src/qml/Theme.qml</file>
+        <file alias="qml/NumpadPage.qml">src/qml/NumpadPage.qml</file>
         <file alias="qml/qmldir">src/qml/qmldir</file>
     </qresource>
 </RCC>

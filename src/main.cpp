@@ -3,6 +3,7 @@
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QAction>
+#include <QScreen>
 
 #include <LayerShellQt/Shell>
 #include <LayerShellQt/Window>
@@ -18,7 +19,7 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("osk"));
-    app.setApplicationDisplayName(QStringLiteral("On-Screen Keyboard"));
+    app.setApplicationDisplayName(QStringLiteral("OSK"));
     app.setDesktopFileName(QStringLiteral("osk"));
 
     auto *controller = new KeyboardController(&app);
@@ -51,15 +52,22 @@ int main(int argc, char *argv[])
     controller->setWindow(window);
     controller->setLayerWindow(lsWindow);
 
+    // Apply default screen
+    int screenIdx = controller->defaultScreen();
+    auto screens = QGuiApplication::screens();
+    if (screenIdx > 0 && screenIdx < screens.size()) {
+        window->setScreen(screens[screenIdx]);
+    }
+
     window->show();
 
     // System tray
     auto *tray = new KStatusNotifierItem(QStringLiteral("osk"), &app);
     tray->setIconByName(QStringLiteral("input-keyboard"));
-    tray->setTitle(QStringLiteral("On-Screen Keyboard"));
+    tray->setTitle(QStringLiteral("OSK"));
     tray->setCategory(KStatusNotifierItem::SystemServices);
     tray->setStatus(KStatusNotifierItem::Active);
-    tray->setToolTipTitle(QStringLiteral("On-Screen Keyboard"));
+    tray->setToolTipTitle(QStringLiteral("OSK"));
     tray->setToolTipSubTitle(QStringLiteral("Click to toggle"));
 
     QObject::connect(tray, &KStatusNotifierItem::activateRequested,
@@ -67,17 +75,20 @@ int main(int argc, char *argv[])
         window->setVisible(!window->isVisible());
     });
 
-    // Global shortcut: Meta+K
-    auto *toggleAction = new QAction(QStringLiteral("Toggle On-Screen Keyboard"), &app);
+    // Global shortcut
+    auto *toggleAction = new QAction(QStringLiteral("Toggle OSK"), &app);
     toggleAction->setObjectName(QStringLiteral("toggle-osk"));
     KGlobalAccel::self()->setDefaultShortcut(toggleAction,
         {QKeySequence(Qt::META | Qt::Key_K)});
+    QKeySequence userShortcut(controller->globalShortcut());
     KGlobalAccel::self()->setShortcut(toggleAction,
-        {QKeySequence(Qt::META | Qt::Key_K)});
+        {userShortcut.isEmpty() ? QKeySequence(Qt::META | Qt::Key_K) : userShortcut});
     QObject::connect(toggleAction, &QAction::triggered,
                      window, [window]() {
         window->setVisible(!window->isVisible());
     });
+
+    controller->setToggleAction(toggleAction);
 
     return app.exec();
 }
