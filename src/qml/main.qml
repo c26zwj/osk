@@ -134,16 +134,26 @@ Window {
          : KeyboardController.stickyPosition === 2 ? Math.max(0, rootWindow.height - height)
          : KeyboardController.panelY >= 0 ? KeyboardController.panelY
             : Math.max(0, (rootWindow.height || 800) - 320)
-        readonly property real stickyScale: KeyboardController.stickyPosition !== 0 && KeyboardController.keyboardWidth > 0
-            ? (rootWindow.width * 2 / 3) / KeyboardController.keyboardWidth : 1
-        width: KeyboardController.stickyPosition !== 0
-               ? Math.round(rootWindow.width * 2 / 3)
-               : KeyboardController.keyboardWidth
+        // Widen panel proportionally when numpad is visible to prevent key stretching
+        readonly property real numpadWidthRatio: KeyboardController.numpadVisible && scaler.kbWidth > 0
+            ? (scaler.kbWidth + Theme.keyHeight + Theme.keySpacing + scaler.numpadWidth)
+              / (scaler.kbWidth + Theme.keyHeight)
+            : 1
+        width: {
+            var base = KeyboardController.stickyPosition !== 0
+                       ? Math.round(rootWindow.width * 2 / 3)
+                       : KeyboardController.keyboardWidth
+            return Math.round(base * numpadWidthRatio)
+        }
         height: {
             var h = KeyboardController.compactMode
                     ? Math.round(KeyboardController.keyboardHeight * 5 / 6)
                     : KeyboardController.keyboardHeight
-            return Math.round(h * stickyScale)
+            if (KeyboardController.stickyPosition !== 0 && KeyboardController.keyboardWidth > 0) {
+                var stickyScale = (rootWindow.width * 2 / 3) / KeyboardController.keyboardWidth
+                h = Math.round(h * stickyScale)
+            }
+            return h
         }
         color: Theme.keyboardBackground
         opacity: KeyboardController.opacity
@@ -419,8 +429,8 @@ Window {
                 height: kbHeight
                 transformOrigin: Item.TopLeft
                 transform: Scale {
-                    xScale: contentArea.width / scaler.width
-                    yScale: contentArea.height / scaler.height
+                    xScale: scaler.width > 0 ? contentArea.width / scaler.width : 1
+                    yScale: scaler.height > 0 ? contentArea.height / scaler.height : 1
                 }
 
                 KeyboardLayout {

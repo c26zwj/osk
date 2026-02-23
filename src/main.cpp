@@ -18,6 +18,7 @@ int main(int argc, char *argv[])
     LayerShellQt::Shell::useLayerShell();
 
     QApplication app(argc, argv);
+    app.setOrganizationName(QStringLiteral("osk"));
     app.setApplicationName(QStringLiteral("osk"));
     app.setApplicationDisplayName(QStringLiteral("OSK"));
     app.setDesktopFileName(QStringLiteral("osk"));
