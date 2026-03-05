@@ -1,9 +1,11 @@
 #include <QApplication>
+#include <QLockFile>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QAction>
 #include <QScreen>
+#include <QStandardPaths>
 
 #include <LayerShellQt/Shell>
 #include <LayerShellQt/Window>
@@ -20,6 +22,15 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setOrganizationName(QStringLiteral("osk"));
     app.setApplicationName(QStringLiteral("osk"));
+
+    // Single instance guard
+    const QString lockPath = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation)
+                             + QStringLiteral("/osk.lock");
+    QLockFile lockFile(lockPath);
+    if (!lockFile.tryLock(100)) {
+        qWarning("OSK is already running");
+        return 0;
+    }
     app.setApplicationDisplayName(QStringLiteral("OSK"));
     app.setDesktopFileName(QStringLiteral("osk"));
 

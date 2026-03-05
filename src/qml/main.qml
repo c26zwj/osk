@@ -9,6 +9,7 @@ Window {
     property bool anyPageVisible: KeyboardController.shortcutPageVisible
                                   || KeyboardController.clipboardPageVisible
                                   || KeyboardController.settingsVisible
+                                  || KeyboardController.notesPageVisible
     property int pagePanelHeight: KeyboardController.pagePanelHeight
 
     function updateRegion() {
@@ -101,6 +102,7 @@ Window {
                     KeyboardController.setShortcutPageVisible(false)
                     KeyboardController.setClipboardPageVisible(false)
                     KeyboardController.setSettingsVisible(false)
+                    KeyboardController.setNotesPageVisible(false)
                 }
             }
         }
@@ -119,6 +121,10 @@ Window {
             }
 
             SettingsPage {
+                anchors.fill: parent
+            }
+
+            NotesPage {
                 anchors.fill: parent
             }
         }
@@ -303,6 +309,29 @@ Window {
                     }
                 }
 
+                // Notes
+                Rectangle {
+                    width: 22; height: 22; radius: 4
+                    color: notesMa.containsMouse
+                           ? (KeyboardController.notesPageVisible ? Theme.keyBackgroundModActive : Theme.keyBackground)
+                           : (KeyboardController.notesPageVisible ? Theme.keyBackgroundModActive : "transparent")
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u270E"
+                        color: KeyboardController.notesPageVisible ? Theme.keyText : Theme.keyTextDim
+                        font.pixelSize: 14
+                    }
+                    MouseArea {
+                        id: notesMa; anchors.fill: parent; hoverEnabled: true
+                        onClicked: {
+                            KeyboardController.setShortcutPageVisible(false)
+                            KeyboardController.setClipboardPageVisible(false)
+                            KeyboardController.setSettingsVisible(false)
+                            KeyboardController.setNotesPageVisible(!KeyboardController.notesPageVisible)
+                        }
+                    }
+                }
+
                 // Settings gear
                 Rectangle {
                     width: 22; height: 22; radius: 4
@@ -320,6 +349,7 @@ Window {
                         onClicked: {
                             KeyboardController.setShortcutPageVisible(false)
                             KeyboardController.setClipboardPageVisible(false)
+                            KeyboardController.setNotesPageVisible(false)
                             KeyboardController.setSettingsVisible(!KeyboardController.settingsVisible)
                         }
                     }

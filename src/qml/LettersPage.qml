@@ -145,10 +145,18 @@ Column {
         }
         KeyButton { label: ""; keyCode: 57; keyWidth: 4.5 }
         KeyButton {
-            label: "Alt"; keyWidth: 1.0; isModifier: true
-            modifierActive: KeyboardController.altActive
-            modifierLocked: KeyboardController.altLocked
-            onClicked: KeyboardController.toggleAlt()
+            label: "\u270E"; keyWidth: 1.0; isModifier: true
+            modifierActive: KeyboardController.notesPageVisible
+            onClicked: {
+                if (KeyboardController.notesPageVisible) {
+                    KeyboardController.setNotesPageVisible(false)
+                } else {
+                    KeyboardController.setShortcutPageVisible(false)
+                    KeyboardController.setClipboardPageVisible(false)
+                    KeyboardController.setSettingsVisible(false)
+                    KeyboardController.setNotesPageVisible(true)
+                }
+            }
         }
         KeyButton {
             label: "\u00a7"; keyWidth: 1.0; isModifier: true
@@ -158,6 +166,7 @@ Column {
                     KeyboardController.setShortcutPageVisible(false)
                 } else {
                     KeyboardController.setClipboardPageVisible(false)
+                    KeyboardController.setNotesPageVisible(false)
                     KeyboardController.setSettingsVisible(false)
                     KeyboardController.setShortcutPageVisible(true)
                 }
@@ -171,6 +180,7 @@ Column {
                     KeyboardController.setClipboardPageVisible(false)
                 } else {
                     KeyboardController.setShortcutPageVisible(false)
+                    KeyboardController.setNotesPageVisible(false)
                     KeyboardController.setSettingsVisible(false)
                     KeyboardController.refreshClipboardHistory()
                     KeyboardController.setClipboardPageVisible(true)

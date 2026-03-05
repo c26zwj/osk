@@ -1003,53 +1003,64 @@ Rectangle {
                     }
                 }
 
-                // Whisper model path
+                // Voice model
                 Column {
                     spacing: 4
                     anchors.horizontalCenter: parent.horizontalCenter
+                    width: settingsRoot.colWidth - 20
 
                     Text {
-                        text: "Whisper model:"
+                        text: "Voice model:"
                         color: Theme.keyText
                         font.pixelSize: 13
-                        anchors.horizontalCenter: parent.horizontalCenter
                     }
 
                     Row {
                         spacing: 4
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width
 
                         Rectangle {
-                            width: Math.min(320, settingsRoot.colWidth - 60)
+                            width: parent.width - 36
                             height: 28
                             radius: 4
                             color: Qt.lighter(Theme.keyboardBackground, 1.3)
                             border.color: Theme.keyTextDim
                             border.width: 1
+                            clip: true
 
-                            TextEdit {
-                                id: whisperPathInput
+                            TextInput {
+                                id: moonshineModelInput
                                 anchors.fill: parent
-                                anchors.margins: 6
+                                anchors.leftMargin: 6
+                                anchors.rightMargin: 6
                                 color: Theme.keyText
                                 selectionColor: Theme.keyBackgroundPressed
                                 font.pixelSize: 11
-                                verticalAlignment: TextEdit.AlignVCenter
-                                text: KeyboardController.whisperModelPath
+                                verticalAlignment: TextInput.AlignVCenter
+                                text: KeyboardController.moonshineModel
+                                onActiveFocusChanged: KeyboardController.setShortcutDialogOpen(activeFocus)
                                 onTextChanged: {
-                                    if (text !== KeyboardController.whisperModelPath)
-                                        KeyboardController.setWhisperModelPath(text)
+                                    if (text !== KeyboardController.moonshineModel)
+                                        KeyboardController.setMoonshineModel(text)
                                 }
                             }
                         }
 
                         Rectangle {
-                            width: 36; height: 28; radius: 4
+                            width: 28; height: 28; radius: 4
                             color: browseMa.pressed ? Theme.keyBackgroundPressed : Theme.keyBackground
-                            Text { anchors.centerIn: parent; text: "..."; color: Theme.keyText; font.pixelSize: 13; font.bold: true }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "\u2026"
+                                color: Theme.keyText
+                                font.pixelSize: 14
+                            }
+
                             MouseArea {
-                                id: browseMa; anchors.fill: parent
-                                onClicked: KeyboardController.browseWhisperModel()
+                                id: browseMa
+                                anchors.fill: parent
+                                onClicked: KeyboardController.browseVoiceModel()
                             }
                         }
                     }

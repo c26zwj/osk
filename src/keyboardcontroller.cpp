@@ -2,6 +2,78 @@
 #include "virtualkeyboard.h"
 
 #include <linux/input-event-codes.h>
+#include <algorithm>
+#include <cmath>
+#include <dlfcn.h>
+#include <vector>
+
+// ---------------------------------------------------------------------------
+// Moonshine C API — loaded at runtime via dlopen to avoid link-time version
+// mismatch between libmoonshine.so and the system onnxruntime.
+// ---------------------------------------------------------------------------
+#define MOONSHINE_HEADER_VERSION (20000)
+#define MOONSHINE_MODEL_ARCH_TINY (0)
+#define MOONSHINE_MODEL_ARCH_BASE (1)
+#define MOONSHINE_MODEL_ARCH_TINY_STREAMING (2)
+#define MOONSHINE_MODEL_ARCH_BASE_STREAMING (3)
+#define MOONSHINE_MODEL_ARCH_SMALL_STREAMING (4)
+#define MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING (5)
+#define MOONSHINE_ERROR_NONE (0)
+
+struct transcriber_option_t { const char *name; const char *value; };
+struct transcript_line_t {
+    const char *text;
+    const float *audio_data;
+    size_t audio_data_count;
+    float start_time;
+    float duration;
+    uint64_t id;
+    int8_t is_complete, is_updated, is_new, has_text_changed, has_speaker_id;
+    uint64_t speaker_id;
+    uint32_t speaker_index;
+    uint32_t last_transcription_latency_ms;
+};
+struct transcript_t {
+    struct transcript_line_t *lines;
+    uint64_t line_count;
+};
+
+// Function pointer types
+using fn_load_t = int32_t (*)(const char *, uint32_t, const transcriber_option_t *, uint64_t, int32_t);
+using fn_free_t = void (*)(int32_t);
+using fn_transcribe_t = int32_t (*)(int32_t, float *, uint64_t, int32_t, uint32_t, transcript_t **);
+using fn_error_str_t = const char *(*)(int32_t);
+
+static void *s_moonshineLib = nullptr;
+static fn_load_t s_loadTranscriber = nullptr;
+static fn_free_t s_freeTranscriber = nullptr;
+static fn_transcribe_t s_transcribe = nullptr;
+static fn_error_str_t s_errorToString = nullptr;
+
+static bool loadMoonshineLib()
+{
+    if (s_moonshineLib) return true;
+    s_moonshineLib = dlopen("libmoonshine.so", RTLD_NOW);
+    if (!s_moonshineLib) {
+        qWarning("Failed to load libmoonshine.so: %s", dlerror());
+        return false;
+    }
+    s_loadTranscriber = reinterpret_cast<fn_load_t>(
+        dlsym(s_moonshineLib, "moonshine_load_transcriber_from_files"));
+    s_freeTranscriber = reinterpret_cast<fn_free_t>(
+        dlsym(s_moonshineLib, "moonshine_free_transcriber"));
+    s_transcribe = reinterpret_cast<fn_transcribe_t>(
+        dlsym(s_moonshineLib, "moonshine_transcribe_without_streaming"));
+    s_errorToString = reinterpret_cast<fn_error_str_t>(
+        dlsym(s_moonshineLib, "moonshine_error_to_string"));
+    if (!s_loadTranscriber || !s_freeTranscriber || !s_transcribe || !s_errorToString) {
+        qWarning("Failed to resolve moonshine symbols: %s", dlerror());
+        dlclose(s_moonshineLib);
+        s_moonshineLib = nullptr;
+        return false;
+    }
+    return true;
+}
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
@@ -9,6 +81,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QStandardPaths>
@@ -16,7 +89,6 @@
 #include <QKeySequence>
 #include <QQuickWindow>
 #include <QScreen>
-#include <QFileDialog>
 #include <QProcess>
 #include <QSettings>
 #include <QDBusConnection>
@@ -105,8 +177,8 @@ KeyboardController::KeyboardController(QObject *parent)
     m_panelX = s.value(QStringLiteral("panelX"), -1).toInt();
     m_panelY = s.value(QStringLiteral("panelY"), -1).toInt();
     m_pagePanelHeight = s.value(QStringLiteral("pagePanelHeight"), 250).toInt();
-    m_whisperModelPath = s.value(QStringLiteral("whisperModelPath"),
-        QDir::homePath() + QStringLiteral("/.local/share/whisper.cpp/ggml-base.en.bin")).toString();
+    m_moonshineModel = s.value(QStringLiteral("moonshineModel"),
+        QStringLiteral("moonshine/tiny")).toString();
 
     // Load shortcuts
     m_shortcuts = s.value(QStringLiteral("shortcuts")).toList();
@@ -140,6 +212,7 @@ KeyboardController::KeyboardController(QObject *parent)
         QStringLiteral("Meta+K")).toString();
     m_defaultScreen = s.value(QStringLiteral("defaultScreen"), 0).toInt();
     m_autostartEnabled = QFile::exists(autostartFilePath());
+    m_notesContent = s.value(QStringLiteral("notesContent")).toString();
 
     // Auto-hide timer
     m_autoHideTimer.setSingleShot(true);
@@ -155,7 +228,11 @@ KeyboardController::KeyboardController(QObject *parent)
     });
 }
 
-KeyboardController::~KeyboardController() = default;
+KeyboardController::~KeyboardController()
+{
+    if (m_transcriberHandle >= 0 && s_freeTranscriber)
+        s_freeTranscriber(m_transcriberHandle);
+}
 
 // ---------------------------------------------------------------------------
 // Property getters
@@ -355,25 +432,31 @@ void KeyboardController::setPagePanelHeight(int px)
     }
 }
 
-QString KeyboardController::whisperModelPath() const { return m_whisperModelPath; }
+QString KeyboardController::moonshineModel() const { return m_moonshineModel; }
 
-void KeyboardController::setWhisperModelPath(const QString &path)
+void KeyboardController::setMoonshineModel(const QString &model)
 {
-    if (m_whisperModelPath != path) {
-        m_whisperModelPath = path;
-        QSettings().setValue(QStringLiteral("whisperModelPath"), path);
-        emit whisperModelPathChanged();
+    if (m_moonshineModel != model) {
+        m_moonshineModel = model;
+        QSettings().setValue(QStringLiteral("moonshineModel"), model);
+        // Invalidate cached transcriber so it reloads with the new model
+        if (m_transcriberHandle >= 0 && s_freeTranscriber) {
+            s_freeTranscriber(m_transcriberHandle);
+            m_transcriberHandle = -1;
+        }
+        emit moonshineModelChanged();
     }
 }
 
-void KeyboardController::browseWhisperModel()
+void KeyboardController::browseVoiceModel()
 {
-    QString startDir = QFileInfo(m_whisperModelPath).path();
-    QString path = QFileDialog::getOpenFileName(nullptr,
-        QStringLiteral("Select Whisper Model"), startDir,
-        QStringLiteral("Model files (*.bin);;All files (*)"));
+    QString dir = m_moonshineModel;
+    if (dir.isEmpty() || !QFileInfo::exists(dir))
+        dir = QDir::homePath();
+    QString path = QFileDialog::getExistingDirectory(nullptr,
+        QStringLiteral("Select Moonshine Model Directory"), dir);
     if (!path.isEmpty())
-        setWhisperModelPath(path);
+        setMoonshineModel(path);
 }
 
 // ---------------------------------------------------------------------------
@@ -420,42 +503,124 @@ void KeyboardController::toggleVoiceTyping()
     }
 }
 
+static uint32_t inferModelArch(const QString &path)
+{
+    QString lower = path.toLower();
+    if (lower.contains(QStringLiteral("medium-streaming")))
+        return MOONSHINE_MODEL_ARCH_MEDIUM_STREAMING;
+    if (lower.contains(QStringLiteral("small-streaming")))
+        return MOONSHINE_MODEL_ARCH_SMALL_STREAMING;
+    if (lower.contains(QStringLiteral("base-streaming")))
+        return MOONSHINE_MODEL_ARCH_BASE_STREAMING;
+    if (lower.contains(QStringLiteral("tiny-streaming")))
+        return MOONSHINE_MODEL_ARCH_TINY_STREAMING;
+    if (lower.contains(QStringLiteral("base")))
+        return MOONSHINE_MODEL_ARCH_BASE;
+    return MOONSHINE_MODEL_ARCH_TINY;
+}
+
 void KeyboardController::startTranscription()
 {
     if (m_voiceTempFile.isEmpty()) return;
 
-    m_transcribeProcess = new QProcess(this);
-    connect(m_transcribeProcess, &QProcess::finished, this, [this]() {
-        QString output = QString::fromUtf8(m_transcribeProcess->readAllStandardOutput()).trimmed();
-        m_transcribeProcess->deleteLater();
-        m_transcribeProcess = nullptr;
-
-        // Clean up temp file
-        QFile::remove(m_voiceTempFile);
+    // Read WAV file (16kHz, mono, 16-bit signed int from pw-record)
+    QFile wavFile(m_voiceTempFile);
+    if (!wavFile.open(QIODevice::ReadOnly)) {
+        qWarning("Failed to open recorded audio file: %s",
+                 qPrintable(m_voiceTempFile));
         m_voiceTempFile.clear();
+        return;
+    }
 
-        if (!output.isEmpty()) {
-            QDBusInterface klipper(QStringLiteral("org.kde.klipper"),
-                                   QStringLiteral("/klipper"),
-                                   QStringLiteral("org.kde.klipper.klipper"));
-            klipper.call(QStringLiteral("setClipboardContents"), output);
-            m_savedWindowIsTerminal = isActiveWindowTerminal();
-            QTimer::singleShot(50, this, [this]() { sendPaste(); });
+    QByteArray wavData = wavFile.readAll();
+    wavFile.close();
+    QFile::remove(m_voiceTempFile);
+    m_voiceTempFile.clear();
+
+    // Skip 44-byte WAV header to get to PCM data
+    constexpr int wavHeaderSize = 44;
+    if (wavData.size() <= wavHeaderSize) {
+        qWarning("WAV file too small, no audio data");
+        return;
+    }
+
+    const int16_t *pcm = reinterpret_cast<const int16_t *>(
+        wavData.constData() + wavHeaderSize);
+    const uint64_t sampleCount =
+        static_cast<uint64_t>(wavData.size() - wavHeaderSize) / sizeof(int16_t);
+
+    if (sampleCount == 0) {
+        qWarning("No audio samples in WAV file");
+        return;
+    }
+
+    // Convert int16 PCM to float [-1.0, 1.0]
+    std::vector<float> audioFloat(sampleCount);
+    for (uint64_t i = 0; i < sampleCount; ++i)
+        audioFloat[i] = static_cast<float>(pcm[i]) / 32768.0f;
+
+    // Load moonshine library if not yet loaded
+    if (!loadMoonshineLib()) return;
+
+    // Lazily load transcriber
+    if (m_transcriberHandle < 0) {
+        if (m_moonshineModel.isEmpty()) {
+            qWarning("No moonshine model path configured");
+            return;
         }
-    });
+        m_transcriberArch = inferModelArch(m_moonshineModel);
+        QByteArray pathUtf8 = m_moonshineModel.toUtf8();
+        m_transcriberHandle = s_loadTranscriber(
+            pathUtf8.constData(), m_transcriberArch,
+            nullptr, 0, MOONSHINE_HEADER_VERSION);
+        if (m_transcriberHandle < 0) {
+            qWarning("Failed to load moonshine transcriber from '%s': %s",
+                     pathUtf8.constData(),
+                     s_errorToString(m_transcriberHandle));
+            return;
+        }
+        qDebug("Loaded moonshine transcriber (arch=%u) from %s",
+               m_transcriberArch, pathUtf8.constData());
+    }
 
-    m_transcribeProcess->start(QStringLiteral("whisper-cli"),
-        {QStringLiteral("-m"), m_whisperModelPath,
-         QStringLiteral("-nt"),
-         QStringLiteral("-np"),
-         QStringLiteral("-f"), m_voiceTempFile});
+    qDebug("Audio: %llu samples (%.1f seconds), peak=%.4f",
+           sampleCount, sampleCount / 16000.0,
+           *std::max_element(audioFloat.begin(), audioFloat.end(),
+               [](float a, float b) { return std::abs(a) < std::abs(b); }));
 
-    if (!m_transcribeProcess->waitForStarted(2000)) {
-        qWarning("Failed to start whisper-cli");
-        m_transcribeProcess->deleteLater();
-        m_transcribeProcess = nullptr;
-        QFile::remove(m_voiceTempFile);
-        m_voiceTempFile.clear();
+    // Transcribe (disable VAD to ensure all audio is processed)
+    constexpr uint32_t MOONSHINE_FLAG_DISABLE_VAD = (1 << 1);
+    transcript_t *transcript = nullptr;
+    int32_t err = s_transcribe(
+        m_transcriberHandle, audioFloat.data(), sampleCount,
+        16000, MOONSHINE_FLAG_DISABLE_VAD, &transcript);
+
+    if (err != MOONSHINE_ERROR_NONE) {
+        qWarning("Moonshine transcription failed: %s",
+                 s_errorToString(err));
+        return;
+    }
+
+    // Collect all transcript lines into a single string
+    QString output;
+    if (transcript && transcript->line_count > 0) {
+        for (uint64_t i = 0; i < transcript->line_count; ++i) {
+            if (i > 0) output += QLatin1Char(' ');
+            output += QString::fromUtf8(transcript->lines[i].text);
+        }
+        output = output.trimmed();
+    }
+
+    if (!output.isEmpty()) {
+        qDebug("Transcribed: %s", qPrintable(output));
+        QDBusInterface klipper(QStringLiteral("org.kde.klipper"),
+                               QStringLiteral("/klipper"),
+                               QStringLiteral("org.kde.klipper.klipper"));
+        klipper.call(QStringLiteral("setClipboardContents"), output);
+        m_savedWindowIsTerminal = isActiveWindowTerminal();
+        QTimer::singleShot(50, this, [this]() { sendPaste(); });
+    } else {
+        qDebug("Moonshine: no speech detected");
     }
 }
 
@@ -701,6 +866,32 @@ void KeyboardController::setClipboardPageVisible(bool visible)
         m_clipboardPageVisible = visible;
         m_textInputMode = visible;
         emit clipboardPageVisibleChanged();
+    }
+}
+
+bool KeyboardController::notesPageVisible() const { return m_notesPageVisible; }
+
+void KeyboardController::setNotesPageVisible(bool visible)
+{
+    if (m_notesPageVisible != visible) {
+        if (visible)
+            saveActiveWindow();
+        else
+            restoreActiveWindow();
+        m_notesPageVisible = visible;
+        m_textInputMode = visible;
+        emit notesPageVisibleChanged();
+    }
+}
+
+QString KeyboardController::notesContent() const { return m_notesContent; }
+
+void KeyboardController::setNotesContent(const QString &text)
+{
+    if (m_notesContent != text) {
+        m_notesContent = text;
+        QSettings().setValue(QStringLiteral("notesContent"), text);
+        emit notesContentChanged();
     }
 }
 

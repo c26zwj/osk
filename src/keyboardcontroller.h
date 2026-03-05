@@ -36,6 +36,8 @@ class KeyboardController : public QObject
     Q_PROPERTY(int keyboardHeight READ keyboardHeight WRITE setKeyboardHeight NOTIFY keyboardHeightChanged)
     Q_PROPERTY(bool sizePopupVisible READ sizePopupVisible WRITE setSizePopupVisible NOTIFY sizePopupVisibleChanged)
     Q_PROPERTY(bool clipboardPageVisible READ clipboardPageVisible WRITE setClipboardPageVisible NOTIFY clipboardPageVisibleChanged)
+    Q_PROPERTY(bool notesPageVisible READ notesPageVisible WRITE setNotesPageVisible NOTIFY notesPageVisibleChanged)
+    Q_PROPERTY(QString notesContent READ notesContent WRITE setNotesContent NOTIFY notesContentChanged)
     Q_PROPERTY(QStringList clipboardHistory READ clipboardHistory NOTIFY clipboardHistoryChanged)
     Q_PROPERTY(bool keyBorderEnabled READ keyBorderEnabled WRITE setKeyBorderEnabled NOTIFY keyBorderEnabledChanged)
     Q_PROPERTY(QString keyPressColor READ keyPressColor WRITE setKeyPressColor NOTIFY keyPressColorChanged)
@@ -45,7 +47,7 @@ class KeyboardController : public QObject
     Q_PROPERTY(int panelY READ panelY WRITE setPanelY NOTIFY panelYChanged)
     Q_PROPERTY(int pagePanelHeight READ pagePanelHeight WRITE setPagePanelHeight NOTIFY pagePanelHeightChanged)
     Q_PROPERTY(bool voiceRecording READ voiceRecording NOTIFY voiceRecordingChanged)
-    Q_PROPERTY(QString whisperModelPath READ whisperModelPath WRITE setWhisperModelPath NOTIFY whisperModelPathChanged)
+    Q_PROPERTY(QString moonshineModel READ moonshineModel WRITE setMoonshineModel NOTIFY moonshineModelChanged)
 
     // Appearance
     Q_PROPERTY(qreal opacity READ opacity WRITE setOpacity NOTIFY opacityChanged)
@@ -120,6 +122,11 @@ public:
 
     bool clipboardPageVisible() const;
     Q_INVOKABLE void setClipboardPageVisible(bool visible);
+
+    bool notesPageVisible() const;
+    Q_INVOKABLE void setNotesPageVisible(bool visible);
+    QString notesContent() const;
+    Q_INVOKABLE void setNotesContent(const QString &text);
     QStringList clipboardHistory() const;
     Q_INVOKABLE void refreshClipboardHistory();
     Q_INVOKABLE void insertClipboardEntry(const QString &text);
@@ -148,9 +155,9 @@ public:
     bool voiceRecording() const;
     Q_INVOKABLE void toggleVoiceTyping();
 
-    QString whisperModelPath() const;
-    Q_INVOKABLE void setWhisperModelPath(const QString &path);
-    Q_INVOKABLE void browseWhisperModel();
+    QString moonshineModel() const;
+    Q_INVOKABLE void setMoonshineModel(const QString &model);
+    Q_INVOKABLE void browseVoiceModel();
 
     // Appearance
     qreal opacity() const;
@@ -219,6 +226,8 @@ signals:
     void keyboardHeightChanged();
     void sizePopupVisibleChanged();
     void clipboardPageVisibleChanged();
+    void notesPageVisibleChanged();
+    void notesContentChanged();
     void clipboardHistoryChanged();
     void keyBorderEnabledChanged();
     void keyPressColorChanged();
@@ -228,7 +237,7 @@ signals:
     void panelYChanged();
     void pagePanelHeightChanged();
     void voiceRecordingChanged();
-    void whisperModelPathChanged();
+    void moonshineModelChanged();
     void opacityChanged();
     void fontSizeChanged();
     void keyRadiusChanged();
@@ -283,6 +292,8 @@ private:
     int m_keyboardHeight = 300;
     bool m_sizePopupVisible = false;
     bool m_clipboardPageVisible = false;
+    bool m_notesPageVisible = false;
+    QString m_notesContent;
     bool m_keyBorderEnabled = false;
     QString m_keyPressColor;
     QString m_lockedKeyColor;
@@ -302,10 +313,11 @@ private:
 
     // Voice typing
     QProcess *m_recordProcess = nullptr;
-    QProcess *m_transcribeProcess = nullptr;
     bool m_voiceRecording = false;
     QString m_voiceTempFile;
-    QString m_whisperModelPath;
+    QString m_moonshineModel;
+    int32_t m_transcriberHandle = -1;
+    uint32_t m_transcriberArch = 0;
 
     // New settings
     qreal m_opacity = 1.0;

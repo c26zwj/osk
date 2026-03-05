@@ -3,10 +3,13 @@ import QtQuick
 Column {
     spacing: Theme.keySpacing
 
-    // Row 1: NumLock, /, *, -
+    // Row 1: Del/Bksp, /, *, -
     Row {
         spacing: Theme.keySpacing
-        KeyButton { label: "Num"; keyCode: 69 }
+        KeyButton {
+            label: KeyboardController.compactMode ? "Del" : "Bksp"
+            keyCode: KeyboardController.compactMode ? 111 : 14
+        }
         KeyButton { label: "/"; keyCode: 98 }
         KeyButton { label: "*"; keyCode: 55 }
         KeyButton { label: "-"; keyCode: 74 }
