@@ -1,6 +1,12 @@
 #include "keyboardcontroller.h"
 #include "virtualkeyboard.h"
 
+#include <QDir>
+#include <QFileInfo>
+#include <QProcess>
+#include <QString>
+#include <QStringList>
+
 #include <linux/input-event-codes.h>
 #include <algorithm>
 #include <cmath>
@@ -50,14 +56,20 @@ static fn_free_t s_freeTranscriber = nullptr;
 static fn_transcribe_t s_transcribe = nullptr;
 static fn_error_str_t s_errorToString = nullptr;
 
-static bool loadMoonshineLib()
+// Returns the directory of the pip-installed moonshine_voice package, or empty string.
+static QString findMoonshinePackageDir()
 {
-    if (s_moonshineLib) return true;
-    s_moonshineLib = dlopen("libmoonshine.so", RTLD_NOW);
-    if (!s_moonshineLib) {
-        qWarning("Failed to load libmoonshine.so: %s", dlerror());
-        return false;
-    }
+    QProcess proc;
+    proc.start(QStringLiteral("python3"),
+        {QStringLiteral("-c"),
+         QStringLiteral("import moonshine_voice, os; print(os.path.dirname(moonshine_voice.__file__))")});
+    if (!proc.waitForFinished(15000) || proc.exitCode() != 0)
+        return {};
+    return QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+}
+
+static bool resolveSymbols()
+{
     s_loadTranscriber = reinterpret_cast<fn_load_t>(
         dlsym(s_moonshineLib, "moonshine_load_transcriber_from_files"));
     s_freeTranscriber = reinterpret_cast<fn_free_t>(
@@ -73,6 +85,69 @@ static bool loadMoonshineLib()
         return false;
     }
     return true;
+}
+
+static bool loadMoonshineLib()
+{
+    if (s_moonshineLib) return true;
+
+    // 1. Try system-installed libmoonshine.so first.
+    s_moonshineLib = dlopen("libmoonshine.so", RTLD_NOW | RTLD_GLOBAL);
+    if (s_moonshineLib)
+        return resolveSymbols();
+
+    // 2. Look for the pip-installed moonshine_voice package.
+    QString pkgDir = findMoonshinePackageDir();
+
+    if (pkgDir.isEmpty()) {
+        // 3. Not installed — try pip install and retry.
+        qDebug("moonshine_voice not found; installing via pip...");
+        // Try --break-system-packages (needed on newer distros with PEP 668)
+        QProcess pip;
+        pip.start(QStringLiteral("python3"),
+            {QStringLiteral("-m"), QStringLiteral("pip"), QStringLiteral("install"),
+             QStringLiteral("moonshine-voice"),
+             QStringLiteral("--break-system-packages"), QStringLiteral("--quiet")});
+        if (!pip.waitForFinished(300000) || pip.exitCode() != 0) {
+            // Fallback: without the flag (venvs, older distros)
+            pip.start(QStringLiteral("python3"),
+                {QStringLiteral("-m"), QStringLiteral("pip"), QStringLiteral("install"),
+                 QStringLiteral("moonshine-voice"), QStringLiteral("--quiet")});
+            pip.waitForFinished(300000);
+        }
+        pkgDir = findMoonshinePackageDir();
+    }
+
+    if (pkgDir.isEmpty()) {
+        qWarning("Failed to locate moonshine_voice package after install attempt");
+        return false;
+    }
+
+    // 4. Pre-load the bundled onnxruntime from the package's companion .libs/ dir
+    //    so that libmoonshine.so finds it via RTLD_GLOBAL without needing ldconfig.
+    QString libsDir = pkgDir + QStringLiteral(".libs");
+    QDir d(libsDir);
+    if (d.exists()) {
+        const QStringList onnxLibs = d.entryList(
+            {QStringLiteral("libonnxruntime*.so*")}, QDir::Files);
+        for (const QString &f : onnxLibs) {
+            QString fullPath = libsDir + QLatin1Char('/') + f;
+            if (dlopen(qPrintable(fullPath), RTLD_NOW | RTLD_GLOBAL)) {
+                qDebug("Pre-loaded %s", qPrintable(fullPath));
+                break;
+            }
+        }
+    }
+
+    // 5. dlopen the package's libmoonshine.so.
+    QString libPath = pkgDir + QStringLiteral("/libmoonshine.so");
+    s_moonshineLib = dlopen(qPrintable(libPath), RTLD_NOW);
+    if (!s_moonshineLib) {
+        qWarning("Failed to load %s: %s", qPrintable(libPath), dlerror());
+        return false;
+    }
+
+    return resolveSymbols();
 }
 #include <QAction>
 #include <QApplication>
@@ -212,7 +287,16 @@ KeyboardController::KeyboardController(QObject *parent)
         QStringLiteral("Meta+K")).toString();
     m_defaultScreen = s.value(QStringLiteral("defaultScreen"), 0).toInt();
     m_autostartEnabled = QFile::exists(autostartFilePath());
-    m_notesContent = s.value(QStringLiteral("notesContent")).toString();
+    m_notesList = s.value(QStringLiteral("notesList")).toList();
+    if (m_notesList.isEmpty()) {
+        // Migrate from old single-note storage, or create default
+        QVariantMap note;
+        note[QStringLiteral("title")] = QStringLiteral("Note 1");
+        note[QStringLiteral("content")] = s.value(QStringLiteral("notesContent")).toString();
+        m_notesList.append(note);
+    }
+    m_currentNoteIndex = qBound(0, s.value(QStringLiteral("currentNoteIndex"), 0).toInt(),
+                                (int)m_notesList.size() - 1);
 
     // Auto-hide timer
     m_autoHideTimer.setSingleShot(true);
@@ -562,6 +646,50 @@ void KeyboardController::startTranscription()
     // Load moonshine library if not yet loaded
     if (!loadMoonshineLib()) return;
 
+    // Auto-download the tiny model if not yet configured or path is missing.
+    auto tryDownloadModel = [this]() -> bool {
+        // Check the well-known cache path for the tiny-en quantized model.
+        QString cachePath = QDir::homePath() +
+            QStringLiteral("/.cache/moonshine_voice"
+                           "/download.moonshine.ai/model/tiny-en/quantized/tiny-en");
+        if (QFileInfo::exists(cachePath)) {
+            setMoonshineModel(cachePath);
+            return true;
+        }
+        qDebug("Downloading moonshine tiny-en model (arch 0)...");
+        QProcess proc;
+        proc.start(QStringLiteral("python3"),
+            {QStringLiteral("-m"), QStringLiteral("moonshine_voice.download"),
+             QStringLiteral("--language"), QStringLiteral("en"),
+             QStringLiteral("--model-arch"), QStringLiteral("0")});
+        if (!proc.waitForFinished(300000)) {
+            qWarning("moonshine_voice.download timed out");
+            return false;
+        }
+        // Accept the cached path after download completes.
+        if (QFileInfo::exists(cachePath)) {
+            setMoonshineModel(cachePath);
+            return true;
+        }
+        // Fallback: scan output lines for an existing filesystem path.
+        QString combined = QString::fromUtf8(proc.readAllStandardOutput()) +
+                           QString::fromUtf8(proc.readAllStandardError());
+        for (const QString &line : combined.split(QLatin1Char('\n'))) {
+            QString trimmed = line.trimmed();
+            if (!trimmed.isEmpty() && trimmed.contains(QLatin1Char('/')) &&
+                QFileInfo::exists(trimmed)) {
+                setMoonshineModel(trimmed);
+                return true;
+            }
+        }
+        qWarning("Could not determine downloaded model path");
+        return false;
+    };
+
+    if (m_moonshineModel.isEmpty() || !QFileInfo::exists(m_moonshineModel)) {
+        if (!tryDownloadModel()) return;
+    }
+
     // Lazily load transcriber
     if (m_transcriberHandle < 0) {
         if (m_moonshineModel.isEmpty()) {
@@ -884,15 +1012,70 @@ void KeyboardController::setNotesPageVisible(bool visible)
     }
 }
 
-QString KeyboardController::notesContent() const { return m_notesContent; }
+QVariantList KeyboardController::notesList() const { return m_notesList; }
+int KeyboardController::currentNoteIndex() const { return m_currentNoteIndex; }
 
-void KeyboardController::setNotesContent(const QString &text)
+void KeyboardController::setCurrentNoteIndex(int index)
 {
-    if (m_notesContent != text) {
-        m_notesContent = text;
-        QSettings().setValue(QStringLiteral("notesContent"), text);
-        emit notesContentChanged();
+    if (index < 0 || index >= (int)m_notesList.size() || m_currentNoteIndex == index)
+        return;
+    m_currentNoteIndex = index;
+    QSettings().setValue(QStringLiteral("currentNoteIndex"), index);
+    emit currentNoteIndexChanged();
+}
+
+void KeyboardController::addNote()
+{
+    QVariantMap note;
+    note[QStringLiteral("title")] = QStringLiteral("Note ") + QString::number(m_notesList.size() + 1);
+    note[QStringLiteral("content")] = QString();
+    m_notesList.append(note);
+    QSettings().setValue(QStringLiteral("notesList"), m_notesList);
+    emit notesListChanged();
+    // Set index directly to avoid equality guard; emit manually
+    m_currentNoteIndex = m_notesList.size() - 1;
+    QSettings().setValue(QStringLiteral("currentNoteIndex"), m_currentNoteIndex);
+    emit currentNoteIndexChanged();
+}
+
+void KeyboardController::deleteNote(int index)
+{
+    if (index < 0 || index >= (int)m_notesList.size()) return;
+    m_notesList.removeAt(index);
+    if (m_notesList.isEmpty()) {
+        QVariantMap note;
+        note[QStringLiteral("title")] = QStringLiteral("Note 1");
+        note[QStringLiteral("content")] = QString();
+        m_notesList.append(note);
     }
+    int newIdx = qBound(0, index > 0 ? index - 1 : 0, (int)m_notesList.size() - 1);
+    m_currentNoteIndex = newIdx;
+    QSettings().setValue(QStringLiteral("notesList"), m_notesList);
+    QSettings().setValue(QStringLiteral("currentNoteIndex"), newIdx);
+    emit notesListChanged();
+    emit currentNoteIndexChanged();
+}
+
+void KeyboardController::setNoteTitle(int index, const QString &title)
+{
+    if (index < 0 || index >= (int)m_notesList.size()) return;
+    auto map = m_notesList[index].toMap();
+    if (map[QStringLiteral("title")] == title) return;
+    map[QStringLiteral("title")] = title;
+    m_notesList[index] = map;
+    QSettings().setValue(QStringLiteral("notesList"), m_notesList);
+    emit notesListChanged();
+}
+
+void KeyboardController::setNoteContent(int index, const QString &content)
+{
+    if (index < 0 || index >= (int)m_notesList.size()) return;
+    auto map = m_notesList[index].toMap();
+    if (map[QStringLiteral("content")] == content) return;
+    map[QStringLiteral("content")] = content;
+    m_notesList[index] = map;
+    QSettings().setValue(QStringLiteral("notesList"), m_notesList);
+    // No notesListChanged — avoids re-rendering tabs on every keystroke
 }
 
 QStringList KeyboardController::clipboardHistory() const { return m_clipboardHistory; }

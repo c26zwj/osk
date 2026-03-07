@@ -37,7 +37,8 @@ class KeyboardController : public QObject
     Q_PROPERTY(bool sizePopupVisible READ sizePopupVisible WRITE setSizePopupVisible NOTIFY sizePopupVisibleChanged)
     Q_PROPERTY(bool clipboardPageVisible READ clipboardPageVisible WRITE setClipboardPageVisible NOTIFY clipboardPageVisibleChanged)
     Q_PROPERTY(bool notesPageVisible READ notesPageVisible WRITE setNotesPageVisible NOTIFY notesPageVisibleChanged)
-    Q_PROPERTY(QString notesContent READ notesContent WRITE setNotesContent NOTIFY notesContentChanged)
+    Q_PROPERTY(QVariantList notesList READ notesList NOTIFY notesListChanged)
+    Q_PROPERTY(int currentNoteIndex READ currentNoteIndex WRITE setCurrentNoteIndex NOTIFY currentNoteIndexChanged)
     Q_PROPERTY(QStringList clipboardHistory READ clipboardHistory NOTIFY clipboardHistoryChanged)
     Q_PROPERTY(bool keyBorderEnabled READ keyBorderEnabled WRITE setKeyBorderEnabled NOTIFY keyBorderEnabledChanged)
     Q_PROPERTY(QString keyPressColor READ keyPressColor WRITE setKeyPressColor NOTIFY keyPressColorChanged)
@@ -125,8 +126,13 @@ public:
 
     bool notesPageVisible() const;
     Q_INVOKABLE void setNotesPageVisible(bool visible);
-    QString notesContent() const;
-    Q_INVOKABLE void setNotesContent(const QString &text);
+    QVariantList notesList() const;
+    int currentNoteIndex() const;
+    Q_INVOKABLE void setCurrentNoteIndex(int index);
+    Q_INVOKABLE void addNote();
+    Q_INVOKABLE void deleteNote(int index);
+    Q_INVOKABLE void setNoteTitle(int index, const QString &title);
+    Q_INVOKABLE void setNoteContent(int index, const QString &content);
     QStringList clipboardHistory() const;
     Q_INVOKABLE void refreshClipboardHistory();
     Q_INVOKABLE void insertClipboardEntry(const QString &text);
@@ -227,7 +233,8 @@ signals:
     void sizePopupVisibleChanged();
     void clipboardPageVisibleChanged();
     void notesPageVisibleChanged();
-    void notesContentChanged();
+    void notesListChanged();
+    void currentNoteIndexChanged();
     void clipboardHistoryChanged();
     void keyBorderEnabledChanged();
     void keyPressColorChanged();
@@ -293,7 +300,8 @@ private:
     bool m_sizePopupVisible = false;
     bool m_clipboardPageVisible = false;
     bool m_notesPageVisible = false;
-    QString m_notesContent;
+    QVariantList m_notesList;
+    int m_currentNoteIndex = 0;
     bool m_keyBorderEnabled = false;
     QString m_keyPressColor;
     QString m_lockedKeyColor;
