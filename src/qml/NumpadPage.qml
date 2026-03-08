@@ -27,10 +27,7 @@ Column {
         KeyButton { label: "4"; keyCode: 75 }
         KeyButton { label: "5"; keyCode: 76 }
         KeyButton { label: "6"; keyCode: 77 }
-        KeyButton {
-            label: KeyboardController.compactMode ? "Del" : "Bksp"
-            keyCode: KeyboardController.compactMode ? 111 : 14
-        }
+        KeyButton { label: "\u232B"; keyCode: 14 }
     }
 
     // Rows 4+5: 1-3 and 0/. beside a tall Enter key
