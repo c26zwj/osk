@@ -3,25 +3,25 @@ import QtQuick
 Column {
     spacing: Theme.keySpacing
 
-    // Row 1: Del/Bksp, /, *, -
+    // Row 1: +, /, *, -
     Row {
         spacing: Theme.keySpacing
-        KeyButton {
-            label: KeyboardController.compactMode ? "Del" : "Bksp"
-            keyCode: KeyboardController.compactMode ? 111 : 14
-        }
+        KeyButton { label: "+"; keyCode: 78 }
         KeyButton { label: "/"; keyCode: 98 }
         KeyButton { label: "*"; keyCode: 55 }
         KeyButton { label: "-"; keyCode: 74 }
     }
 
-    // Row 2: 7, 8, 9, +
+    // Row 2: 7, 8, 9, Del/Bksp
     Row {
         spacing: Theme.keySpacing
         KeyButton { label: "7"; keyCode: 71 }
         KeyButton { label: "8"; keyCode: 72 }
         KeyButton { label: "9"; keyCode: 73 }
-        KeyButton { label: "+"; keyCode: 78 }
+        KeyButton {
+            label: KeyboardController.compactMode ? "Del" : "Bksp"
+            keyCode: KeyboardController.compactMode ? 111 : 14
+        }
     }
 
     // Rows 3+4: 4-6 and 1-3 beside a tall Enter key
