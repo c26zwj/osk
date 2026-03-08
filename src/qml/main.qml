@@ -355,6 +355,23 @@ Window {
                     }
                 }
 
+                // Next monitor
+                Rectangle {
+                    visible: Qt.application.screens.length > 1
+                    width: 22; height: 22; radius: 4
+                    color: monMa.containsMouse ? Theme.keyBackground : "transparent"
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u29C9"
+                        color: Theme.keyTextDim
+                        font.pixelSize: 13
+                    }
+                    MouseArea {
+                        id: monMa; anchors.fill: parent; hoverEnabled: true
+                        onClicked: KeyboardController.nextScreen()
+                    }
+                }
+
                 // Minimize to tray
                 Rectangle {
                     width: 22; height: 22; radius: 4

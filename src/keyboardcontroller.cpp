@@ -1459,6 +1459,28 @@ bool KeyboardController::switchScreen(int direction)
     return true;
 }
 
+void KeyboardController::nextScreen()
+{
+    if (!m_window) return;
+
+    auto screens = QGuiApplication::screens();
+    if (screens.size() <= 1) return;
+
+    std::sort(screens.begin(), screens.end(), [](QScreen *a, QScreen *b) {
+        return a->geometry().x() < b->geometry().x();
+    });
+
+    QScreen *current = m_window->screen();
+    int idx = screens.indexOf(current);
+    if (idx < 0) idx = 0;
+
+    int newIdx = (idx + 1) % screens.size();
+
+    m_window->hide();
+    m_window->setScreen(screens[newIdx]);
+    m_window->show();
+}
+
 void KeyboardController::minimizeToTray()
 {
     if (m_window)

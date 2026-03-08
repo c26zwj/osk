@@ -210,6 +210,7 @@ public:
     Q_INVOKABLE void toggleCapsLock();
 
     Q_INVOKABLE bool switchScreen(int direction);
+    Q_INVOKABLE void nextScreen();
 
     Q_INVOKABLE void minimizeToTray();
     Q_INVOKABLE void closeApp();
