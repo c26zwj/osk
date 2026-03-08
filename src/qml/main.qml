@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Window
+import QtQuick.Controls
 
 Window {
     id: rootWindow
@@ -255,7 +256,7 @@ Window {
                 // Microphone (compact mode only)
                 Rectangle {
                     visible: KeyboardController.compactMode
-                    width: 22; height: 22; radius: 4
+                    width: 26; height: 26; radius: 4
                     color: voiceBarMa.containsMouse
                            ? (KeyboardController.voiceRecording ? "#c0392b" : Theme.keyBackground)
                            : (KeyboardController.voiceRecording ? "#c0392b" : "transparent")
@@ -263,17 +264,20 @@ Window {
                         anchors.centerIn: parent
                         text: "\uD83C\uDFA4"
                         color: KeyboardController.voiceRecording ? "#ffffff" : Theme.keyTextDim
-                        font.pixelSize: 13
+                        font.pixelSize: 15
                     }
                     MouseArea {
                         id: voiceBarMa; anchors.fill: parent; hoverEnabled: true
                         onClicked: KeyboardController.toggleVoiceTyping()
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 600
+                        ToolTip.text: KeyboardController.voiceRecording ? "Stop voice typing" : "Voice typing"
                     }
                 }
 
                 // Compact mode toggle
                 Rectangle {
-                    width: 22; height: 22; radius: 4
+                    width: 26; height: 26; radius: 4
                     color: compactMa.containsMouse
                            ? (KeyboardController.compactMode ? Theme.keyBackgroundModActive : Theme.keyBackground)
                            : (KeyboardController.compactMode ? Theme.keyBackgroundModActive : "transparent")
@@ -281,18 +285,21 @@ Window {
                         anchors.centerIn: parent
                         text: "C"
                         color: KeyboardController.compactMode ? Theme.keyText : Theme.keyTextDim
-                        font.pixelSize: 11
+                        font.pixelSize: 13
                         font.bold: true
                     }
                     MouseArea {
                         id: compactMa; anchors.fill: parent; hoverEnabled: true
                         onClicked: KeyboardController.setCompactMode(!KeyboardController.compactMode)
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 600
+                        ToolTip.text: KeyboardController.compactMode ? "Disable compact mode" : "Compact mode"
                     }
                 }
 
                 // Numpad toggle
                 Rectangle {
-                    width: 22; height: 22; radius: 4
+                    width: 26; height: 26; radius: 4
                     color: numpadMa.containsMouse
                            ? (KeyboardController.numpadVisible ? Theme.keyBackgroundModActive : Theme.keyBackground)
                            : (KeyboardController.numpadVisible ? Theme.keyBackgroundModActive : "transparent")
@@ -300,18 +307,21 @@ Window {
                         anchors.centerIn: parent
                         text: "#"
                         color: KeyboardController.numpadVisible ? Theme.keyText : Theme.keyTextDim
-                        font.pixelSize: 12
+                        font.pixelSize: 14
                         font.bold: true
                     }
                     MouseArea {
                         id: numpadMa; anchors.fill: parent; hoverEnabled: true
                         onClicked: KeyboardController.setNumpadVisible(!KeyboardController.numpadVisible)
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 600
+                        ToolTip.text: KeyboardController.numpadVisible ? "Hide numpad" : "Show numpad"
                     }
                 }
 
                 // Notes
                 Rectangle {
-                    width: 22; height: 22; radius: 4
+                    width: 26; height: 26; radius: 4
                     color: notesMa.containsMouse
                            ? (KeyboardController.notesPageVisible ? Theme.keyBackgroundModActive : Theme.keyBackground)
                            : (KeyboardController.notesPageVisible ? Theme.keyBackgroundModActive : "transparent")
@@ -319,7 +329,7 @@ Window {
                         anchors.centerIn: parent
                         text: "\u270E"
                         color: KeyboardController.notesPageVisible ? Theme.keyText : Theme.keyTextDim
-                        font.pixelSize: 14
+                        font.pixelSize: 16
                     }
                     MouseArea {
                         id: notesMa; anchors.fill: parent; hoverEnabled: true
@@ -329,12 +339,15 @@ Window {
                             KeyboardController.setSettingsVisible(false)
                             KeyboardController.setNotesPageVisible(!KeyboardController.notesPageVisible)
                         }
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 600
+                        ToolTip.text: "Notes"
                     }
                 }
 
                 // Settings gear
                 Rectangle {
-                    width: 22; height: 22; radius: 4
+                    width: 26; height: 26; radius: 4
                     color: settingsMa.containsMouse
                            ? (KeyboardController.settingsVisible ? Theme.keyBackgroundModActive : Theme.keyBackground)
                            : (KeyboardController.settingsVisible ? Theme.keyBackgroundModActive : "transparent")
@@ -342,7 +355,7 @@ Window {
                         anchors.centerIn: parent
                         text: "\u2699"
                         color: KeyboardController.settingsVisible ? Theme.keyText : Theme.keyTextDim
-                        font.pixelSize: 16
+                        font.pixelSize: 18
                     }
                     MouseArea {
                         id: settingsMa; anchors.fill: parent; hoverEnabled: true
@@ -352,55 +365,67 @@ Window {
                             KeyboardController.setNotesPageVisible(false)
                             KeyboardController.setSettingsVisible(!KeyboardController.settingsVisible)
                         }
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 600
+                        ToolTip.text: "Settings"
                     }
                 }
 
                 // Next monitor
                 Rectangle {
                     visible: Qt.application.screens.length > 1
-                    width: 22; height: 22; radius: 4
+                    width: 26; height: 26; radius: 4
                     color: monMa.containsMouse ? Theme.keyBackground : "transparent"
                     Text {
                         anchors.centerIn: parent
                         text: "\u29C9"
                         color: Theme.keyTextDim
-                        font.pixelSize: 13
+                        font.pixelSize: 15
                     }
                     MouseArea {
                         id: monMa; anchors.fill: parent; hoverEnabled: true
                         onClicked: KeyboardController.nextScreen()
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 600
+                        ToolTip.text: "Move to next monitor"
                     }
                 }
 
                 // Minimize to tray
                 Rectangle {
-                    width: 22; height: 22; radius: 4
+                    width: 26; height: 26; radius: 4
                     color: minMa.containsMouse ? Theme.keyBackground : "transparent"
                     Text {
                         anchors.centerIn: parent
                         text: "\u2013"
                         color: Theme.keyTextDim
-                        font.pixelSize: 16
+                        font.pixelSize: 18
                     }
                     MouseArea {
                         id: minMa; anchors.fill: parent; hoverEnabled: true
                         onClicked: KeyboardController.minimizeToTray()
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 600
+                        ToolTip.text: "Minimize to tray"
                     }
                 }
 
                 // Close app
                 Rectangle {
-                    width: 22; height: 22; radius: 4
+                    width: 26; height: 26; radius: 4
                     color: closeMa.containsMouse ? "#c0392b" : "transparent"
                     Text {
                         anchors.centerIn: parent
                         text: "\u2715"
                         color: closeMa.containsMouse ? "#ffffff" : Theme.keyTextDim
-                        font.pixelSize: 13
+                        font.pixelSize: 15
                     }
                     MouseArea {
                         id: closeMa; anchors.fill: parent; hoverEnabled: true
                         onClicked: KeyboardController.closeApp()
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 600
+                        ToolTip.text: "Close"
                     }
                 }
             }
