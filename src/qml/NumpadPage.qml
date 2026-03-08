@@ -24,21 +24,29 @@ Column {
         KeyButton { label: "+"; keyCode: 78 }
     }
 
-    // Row 3: 4, 5, 6
+    // Rows 3+4: 4-6 and 1-3 beside a tall Enter key
     Row {
         spacing: Theme.keySpacing
-        KeyButton { label: "4"; keyCode: 75 }
-        KeyButton { label: "5"; keyCode: 76 }
-        KeyButton { label: "6"; keyCode: 77 }
-    }
-
-    // Row 4: 1, 2, 3, Enter
-    Row {
-        spacing: Theme.keySpacing
-        KeyButton { label: "1"; keyCode: 79 }
-        KeyButton { label: "2"; keyCode: 80 }
-        KeyButton { label: "3"; keyCode: 81 }
-        KeyButton { label: "Ent"; keyCode: 96 }
+        Column {
+            spacing: Theme.keySpacing
+            Row {
+                spacing: Theme.keySpacing
+                KeyButton { label: "4"; keyCode: 75 }
+                KeyButton { label: "5"; keyCode: 76 }
+                KeyButton { label: "6"; keyCode: 77 }
+            }
+            Row {
+                spacing: Theme.keySpacing
+                KeyButton { label: "1"; keyCode: 79 }
+                KeyButton { label: "2"; keyCode: 80 }
+                KeyButton { label: "3"; keyCode: 81 }
+            }
+        }
+        KeyButton {
+            label: "\u23CE"
+            keyCode: 96
+            height: Theme.keyHeight * 2 + Theme.keySpacing
+        }
     }
 
     // Row 5: 0 (wide), .
