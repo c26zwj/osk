@@ -1,57 +1,32 @@
 # Orbit OSK
 
-A compact, touch-friendly on-screen keyboard for NixOS running KDE Plasma on
-Wayland. KDE's layer-shell interface keeps keyboard focus in the target app
-while still allowing pointer clicks, and text is sent through the kernel's
-uinput interface using `ydotool`. KWin intentionally does not expose the native
-virtual-keyboard protocol used by `wtype` to ordinary applications.
+A compact, touch-friendly on-screen keyboard for Arch Linux running KDE Plasma
+on Wayland. The keyboard sends events directly through the kernel's `uinput`
+interface, keeping keyboard focus in the target app while still allowing
+pointer clicks.
 
-## Try it
+## Build and install on Arch Linux
 
 ```sh
-nix run .
+sudo pacman -S --needed base-devel cmake qt6-base layer-shell-qt wayland
+makepkg -si
 ```
 
-Pin it to Plasma's task manager or launch it from the application menu as
-**Orbit On-Screen Keyboard**. It opens centered against the bottom screen edge.
+The package installs the executable and desktop entry. Launch it from the
+application menu as **On-Screen Keyboard**.
 
-## Install in NixOS
+On Plasma Wayland, the app uses an Xwayland surface when it is available. The
+surface stays outside the compositor focus chain, so clicking a key leaves the
+target application focused; the keyboard's drag bar moves it directly. Set
+`QT_QPA_PLATFORM=wayland` to force the native layer-shell fallback.
 
-Add the flake to your system inputs, import its NixOS module, and add your login
-user to the `ydotool` group:
+Before typing can work, make sure your user can access `/dev/uinput`:
 
-```nix
-{
-  inputs.orbit-osk.url = "path:/home/you/path/to/osk";
-
-  outputs = inputs@{ nixpkgs, orbit-osk, ... }: {
-    nixosConfigurations.your-host = nixpkgs.lib.nixosSystem {
-      system = "x86_64-linux";
-      specialArgs = { inherit inputs; };
-      modules = [
-        orbit-osk.nixosModules.default
-        {
-          users.users.your-user.extraGroups = [ "ydotool" ];
-        }
-      ];
-    };
-  };
-}
+```bash
+sudo usermod -aG input "$USER"
 ```
 
-Rebuild with `sudo nixos-rebuild switch --flake .#your-host`, then **log out and
-back in** so the new group membership takes effect. The module starts the
-restricted `ydotoold` service, sets `YDOTOOL_SOCKET`, and installs Orbit.
-
-For a quick manual configuration without importing the module:
-
-```nix
-programs.ydotool.enable = true;
-users.users.your-user.extraGroups = [ "ydotool" ];
-```
-
-`nix run .` by itself can launch the interface, but typing requires that system
-service and group membership because `/dev/uinput` is privileged by design.
+Log out and back in after changing group membership.
 
 ## Controls
 
@@ -61,4 +36,4 @@ service and group membership because `/dev/uinput` is privileged by design.
 - Open **Menu** to configure repeat timing, colors, opacity, spacing, and borders.
 - Function keys, Backspace, Tab, Caps Lock, Enter, modifiers, Space, and the
   two arrow keys send native key events.
-- Close the keyboard from the task manager or application launcher.
+- Restore or quit the keyboard from its system tray icon.

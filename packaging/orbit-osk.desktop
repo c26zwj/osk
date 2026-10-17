@@ -1,6 +1,6 @@
 #!/usr/bin/env xdg-open
 [Desktop Entry]
-Name=Orbit On-Screen Keyboard
+Name=On-Screen Keyboard
 Comment=Touch keyboard for Plasma Wayland
 Exec=orbit-osk
 Icon=input-keyboard

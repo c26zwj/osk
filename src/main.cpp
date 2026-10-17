@@ -3,6 +3,10 @@
 #include <QCloseEvent>
 #include <QCheckBox>
 #include <QCursor>
+#include <QClipboard>
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusReply>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -10,13 +14,13 @@
 #include <QGraphicsOpacityEffect>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QLockFile>
 #include <QMap>
 #include <QMouseEvent>
-#include <QProcess>
 #include <QPointer>
 #include <QPushButton>
 #include <QPlainTextEdit>
@@ -37,11 +41,212 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QWindow>
+#include <qpa/qplatformnativeinterface.h>
 #include <LayerShellQt/Window>
+#include <linux/input-event-codes.h>
+#include <linux/uinput.h>
+#include <fcntl.h>
 #include <functional>
 #include <cerrno>
 #include <csignal>
+#include <cstring>
+#include <utility>
+#include <vector>
+#include <sys/ioctl.h>
 #include <unistd.h>
+#include <wayland-client.h>
+
+class UInputKeyboard final {
+public:
+    bool initialize() { return ensureDevice(); }
+
+    ~UInputKeyboard() {
+        if (fd_ >= 0) {
+            if (created_)
+                ioctl(fd_, UI_DEV_DESTROY);
+            close(fd_);
+        }
+    }
+
+    bool tap(int keyCode, const std::vector<int> &modifiers = {}) {
+        if (!ensureDevice())
+            return false;
+        for (int modifier : modifiers)
+            if (!writeKey(modifier, 1))
+                return false;
+        if (!writeKey(keyCode, 1) || !sync())
+            return false;
+
+        if (!writeKey(keyCode, 0))
+            return false;
+        for (auto it = modifiers.rbegin(); it != modifiers.rend(); ++it)
+            if (!writeKey(*it, 0))
+                return false;
+        return sync();
+    }
+
+    bool typeUnicode(uint codepoint) {
+        if (!ensureDevice() || codepoint > 0x10ffff ||
+            (codepoint >= 0xd800 && codepoint <= 0xdfff))
+            return false;
+
+        if (!writeKey(KEY_LEFTCTRL, 1) || !writeKey(KEY_LEFTSHIFT, 1) ||
+            !writeKey(KEY_U, 1) || !sync() || !writeKey(KEY_U, 0) || !sync() ||
+            !writeKey(KEY_LEFTSHIFT, 0) || !writeKey(KEY_LEFTCTRL, 0) || !sync())
+            return false;
+
+        const QByteArray hex = QByteArray::number(codepoint, 16);
+        for (const char digit : hex) {
+            int keyCode = 0;
+            bool shifted = false;
+            if (!asciiKey(static_cast<unsigned char>(digit), keyCode, shifted) ||
+                !tap(keyCode, shifted ? std::vector<int>{KEY_LEFTSHIFT} : std::vector<int>{}))
+                return false;
+        }
+        return tap(KEY_ENTER);
+    }
+
+    static bool asciiKey(uint character, int &keyCode, bool &shifted) {
+        shifted = false;
+        static const int letterCodes[26] = {
+            KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I,
+            KEY_J, KEY_K, KEY_L, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R,
+            KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z
+        };
+        if (character >= 'a' && character <= 'z') {
+            keyCode = letterCodes[character - 'a'];
+            return true;
+        }
+        if (character >= 'A' && character <= 'Z') {
+            keyCode = letterCodes[character - 'A'];
+            shifted = true;
+            return true;
+        }
+        if (character >= '1' && character <= '9') {
+            keyCode = KEY_1 + static_cast<int>(character - '1');
+            return true;
+        }
+        if (character == '0') { keyCode = KEY_0; return true; }
+
+        switch (character) {
+        case ' ': keyCode = KEY_SPACE; return true;
+        case '\t': keyCode = KEY_TAB; return true;
+        case '\n': case '\r': keyCode = KEY_ENTER; return true;
+        case '`': keyCode = KEY_GRAVE; return true;
+        case '-': keyCode = KEY_MINUS; return true;
+        case '=': keyCode = KEY_EQUAL; return true;
+        case '[': keyCode = KEY_LEFTBRACE; return true;
+        case ']': keyCode = KEY_RIGHTBRACE; return true;
+        case '\\': keyCode = KEY_BACKSLASH; return true;
+        case ';': keyCode = KEY_SEMICOLON; return true;
+        case '\'': keyCode = KEY_APOSTROPHE; return true;
+        case ',': keyCode = KEY_COMMA; return true;
+        case '.': keyCode = KEY_DOT; return true;
+        case '/': keyCode = KEY_SLASH; return true;
+        case '~': keyCode = KEY_GRAVE; shifted = true; return true;
+        case '!': keyCode = KEY_1; shifted = true; return true;
+        case '@': keyCode = KEY_2; shifted = true; return true;
+        case '#': keyCode = KEY_3; shifted = true; return true;
+        case '$': keyCode = KEY_4; shifted = true; return true;
+        case '%': keyCode = KEY_5; shifted = true; return true;
+        case '^': keyCode = KEY_6; shifted = true; return true;
+        case '&': keyCode = KEY_7; shifted = true; return true;
+        case '*': keyCode = KEY_8; shifted = true; return true;
+        case '(': keyCode = KEY_9; shifted = true; return true;
+        case ')': keyCode = KEY_0; shifted = true; return true;
+        case '_': keyCode = KEY_MINUS; shifted = true; return true;
+        case '+': keyCode = KEY_EQUAL; shifted = true; return true;
+        case '{': keyCode = KEY_LEFTBRACE; shifted = true; return true;
+        case '}': keyCode = KEY_RIGHTBRACE; shifted = true; return true;
+        case '|': keyCode = KEY_BACKSLASH; shifted = true; return true;
+        case ':': keyCode = KEY_SEMICOLON; shifted = true; return true;
+        case '"': keyCode = KEY_APOSTROPHE; shifted = true; return true;
+        case '<': keyCode = KEY_COMMA; shifted = true; return true;
+        case '>': keyCode = KEY_DOT; shifted = true; return true;
+        case '?': keyCode = KEY_SLASH; shifted = true; return true;
+        default: return false;
+        }
+    }
+
+private:
+    bool ensureDevice() {
+        if (fd_ >= 0)
+            return true;
+        fd_ = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd_ < 0) {
+            qWarning("Cannot open /dev/uinput: %s", strerror(errno));
+            return false;
+        }
+        if (ioctl(fd_, UI_SET_EVBIT, EV_KEY) < 0 ||
+            ioctl(fd_, UI_SET_EVBIT, EV_SYN) < 0 ||
+            ioctl(fd_, UI_SET_EVBIT, EV_REP) < 0) {
+            qWarning("Cannot configure /dev/uinput: %s", strerror(errno));
+            close(fd_);
+            fd_ = -1;
+            return false;
+        }
+        const int keyCodes[] = {
+            KEY_ESC, KEY_BACKSPACE, KEY_TAB, KEY_ENTER, KEY_LEFTCTRL,
+            KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTALT, KEY_RIGHTALT,
+            KEY_LEFTMETA, KEY_SPACE, KEY_CAPSLOCK, KEY_LEFTBRACE,
+            KEY_RIGHTBRACE, KEY_SEMICOLON, KEY_APOSTROPHE, KEY_GRAVE,
+            KEY_MINUS, KEY_EQUAL,
+            KEY_BACKSLASH, KEY_COMMA, KEY_DOT, KEY_SLASH, KEY_102ND,
+            KEY_HOME, KEY_END, KEY_DELETE, KEY_UP, KEY_DOWN, KEY_LEFT,
+            KEY_RIGHT, KEY_MENU
+        };
+        for (int code : keyCodes)
+            ioctl(fd_, UI_SET_KEYBIT, code);
+        for (int code = KEY_1; code <= KEY_0; ++code)
+            ioctl(fd_, UI_SET_KEYBIT, code);
+        for (int code = KEY_Q; code <= KEY_P; ++code)
+            ioctl(fd_, UI_SET_KEYBIT, code);
+        for (int code = KEY_A; code <= KEY_L; ++code)
+            ioctl(fd_, UI_SET_KEYBIT, code);
+        for (int code = KEY_Z; code <= KEY_M; ++code)
+            ioctl(fd_, UI_SET_KEYBIT, code);
+        for (int code = KEY_F1; code <= KEY_F10; ++code)
+            ioctl(fd_, UI_SET_KEYBIT, code);
+        ioctl(fd_, UI_SET_KEYBIT, KEY_F11);
+        ioctl(fd_, UI_SET_KEYBIT, KEY_F12);
+
+        uinput_setup setup{};
+        setup.id.bustype = BUS_USB;
+        setup.id.vendor = 0x1;
+        setup.id.product = 0x1;
+        setup.id.version = 1;
+        std::strncpy(setup.name, "Orbit On-Screen Keyboard", sizeof(setup.name) - 1);
+        if (ioctl(fd_, UI_DEV_SETUP, &setup) < 0 ||
+            ioctl(fd_, UI_DEV_CREATE) < 0) {
+            qWarning("Cannot create the uinput keyboard: %s", strerror(errno));
+            close(fd_);
+            fd_ = -1;
+            return false;
+        }
+        created_ = true;
+        usleep(10000);
+        return true;
+    }
+
+    bool writeKey(int keyCode, int value) {
+        input_event event{};
+        event.type = EV_KEY;
+        event.code = static_cast<__u16>(keyCode);
+        event.value = value;
+        return write(fd_, &event, sizeof(event)) == static_cast<ssize_t>(sizeof(event));
+    }
+
+    bool sync() {
+        input_event event{};
+        event.type = EV_SYN;
+        event.code = SYN_REPORT;
+        return write(fd_, &event, sizeof(event)) == static_cast<ssize_t>(sizeof(event));
+    }
+
+    int fd_ = -1;
+    bool created_ = false;
+};
 
 class DragBar final : public QLabel {
 public:
@@ -58,16 +263,24 @@ public:
 protected:
     void mousePressEvent(QMouseEvent *event) override {
         if (event->button() == Qt::LeftButton) {
+            if (systemMove_ && window()->windowHandle() &&
+                window()->windowHandle()->startSystemMove()) {
+                systemMoveStarted_ = true;
+                event->accept();
+                return;
+            }
             dragging_ = true;
-            if (!systemMove_)
+            if (QGuiApplication::platformName() != QStringLiteral("wayland")) {
                 grabMouse();
+                mouseGrabbed_ = true;
+            }
             dragWindow_(event->globalPosition().toPoint(), true);
             event->accept();
         }
     }
 
     void mouseMoveEvent(QMouseEvent *event) override {
-        if (dragging_ && (event->buttons() & Qt::LeftButton)) {
+        if (dragging_ && !systemMoveStarted_ && (event->buttons() & Qt::LeftButton)) {
             dragWindow_(event->globalPosition().toPoint(), false);
             event->accept();
         }
@@ -75,11 +288,14 @@ protected:
 
     void mouseReleaseEvent(QMouseEvent *event) override {
         if (event->button() == Qt::LeftButton) {
-            if (dragging_)
+            if (dragging_ && !systemMoveStarted_)
                 dragWindow_(event->globalPosition().toPoint(), false);
             dragging_ = false;
-            if (!systemMove_)
+            if (systemMoveStarted_)
+                systemMoveStarted_ = false;
+            else if (mouseGrabbed_)
                 releaseMouse();
+            mouseGrabbed_ = false;
             event->accept();
         }
     }
@@ -87,7 +303,9 @@ protected:
 private:
     std::function<void(QPoint, bool)> dragWindow_;
     bool systemMove_ = false;
+    bool systemMoveStarted_ = false;
     bool dragging_ = false;
+    bool mouseGrabbed_ = false;
 };
 
 class ResizeGrip final : public QWidget {
@@ -262,12 +480,24 @@ private:
 class Keyboard final : public QWidget {
 public:
     Keyboard() {
-        setWindowTitle("Orbit Keyboard");
+        layerMoveTimer_.setSingleShot(true);
+        layerMoveTimer_.setTimerType(Qt::PreciseTimer);
+        layerMoveTimer_.setInterval(8);
+        connect(&layerMoveTimer_, &QTimer::timeout, this, [this] {
+            applyLayerPosition();
+        });
+        if (!uinput_.initialize())
+            qWarning("Keyboard input is unavailable; check access to /dev/uinput");
+        setWindowTitle("On-Screen Keyboard");
         setObjectName("keyboard");
-        setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint |
-                       Qt::WindowDoesNotAcceptFocus | Qt::X11BypassWindowManagerHint);
-        setAttribute(Qt::WA_ShowWithoutActivating, true);
+        Qt::WindowFlags windowFlags = Qt::Tool | Qt::FramelessWindowHint |
+                                      Qt::WindowStaysOnTopHint |
+                                      Qt::WindowDoesNotAcceptFocus;
+        if (QGuiApplication::platformName() == QStringLiteral("xcb"))
+            windowFlags |= Qt::X11BypassWindowManagerHint;
+        setWindowFlags(windowFlags);
         setAttribute(Qt::WA_X11DoNotAcceptFocus, true);
+        setAttribute(Qt::WA_ShowWithoutActivating, true);
         setFocusPolicy(Qt::NoFocus);
         setAttribute(Qt::WA_TranslucentBackground, false);
         settings_.beginGroup("appearance");
@@ -288,12 +518,29 @@ public:
         panel_->setMinimumSize(420, 150);
         panel_->resize(580 + keySpacing_, 199);
         settings_.beginGroup("window");
-        const int savedWidth = settings_.value("width", panel_->width()).toInt();
-        const int savedHeight = settings_.value("height", panel_->height()).toInt();
+        int savedWidth = settings_.value("width", panel_->width()).toInt();
+        int savedHeight = settings_.value("height", panel_->height()).toInt();
         savedPanelPosition_ = QPoint(settings_.value("x", 0).toInt(),
                                      settings_.value("y", 0).toInt());
         restorePanelPosition_ = settings_.contains("x") && settings_.contains("y");
         settings_.endGroup();
+        const QRect availableGeometry = QGuiApplication::primaryScreen()
+                                            ? QGuiApplication::primaryScreen()->availableGeometry()
+                                            : QRect();
+        if (!availableGeometry.isEmpty() &&
+            (savedWidth >= availableGeometry.width() ||
+             savedHeight >= availableGeometry.height())) {
+            savedWidth = panel_->width();
+            savedHeight = panel_->height();
+            savedPanelPosition_ = {};
+            restorePanelPosition_ = false;
+            settings_.beginGroup("window");
+            settings_.remove("width");
+            settings_.remove("height");
+            settings_.remove("x");
+            settings_.remove("y");
+            settings_.endGroup();
+        }
         panel_->resize(qMax(panel_->minimumWidth(), savedWidth),
                        qMax(panel_->minimumHeight(), savedHeight));
         opacityEffect_ = new QGraphicsOpacityEffect(panel_);
@@ -424,8 +671,6 @@ public:
         resize(panel_->size());
         panel_->move(0, 0);
         setWindowState(Qt::WindowNoState);
-        showNormal();
-        resize(panel_->size());
         QScreen *placementScreen = nullptr;
         if (restorePanelPosition_) {
             for (QScreen *screen : QGuiApplication::screens()) {
@@ -442,14 +687,61 @@ public:
             const QPoint desired = restorePanelPosition_
                                        ? savedPanelPosition_
                                        : area.center() - rect().center();
-            move(qBound(area.left(), desired.x(),
-                        qMax(area.left(), area.right() - width() + 1)),
-                 qBound(area.top(), desired.y(),
-                        qMax(area.top(), area.bottom() - height() + 1)));
+            panelPosition_ = QPoint(
+                qBound(area.left(), desired.x(),
+                       qMax(area.left(), area.right() - width() + 1)),
+                qBound(area.top(), desired.y(),
+                       qMax(area.top(), area.bottom() - height() + 1)));
+        }
+
+        if (QGuiApplication::platformName() == QStringLiteral("xcb")) {
+            // X11BypassWindowManagerHint keeps the keyboard outside the
+            // compositor's focus chain. Keyboard input therefore goes to the
+            // application that was focused before a key was clicked.
+            winId();
+        }
+
+        if (QGuiApplication::platformName() == QStringLiteral("wayland")) {
+            // LayerShellQt gives Plasma an explicit overlay surface. Anchor
+            // only the top and left edges so the surface remains the size of
+            // the keyboard instead of becoming an output-sized layer.
+            winId();
+            layer_ = LayerShellQt::Window::get(windowHandle());
+            if (layer_) {
+                layer_->setLayer(LayerShellQt::Window::LayerOverlay);
+                layer_->setKeyboardInteractivity(
+                    LayerShellQt::Window::KeyboardInteractivityNone);
+                layer_->setActivateOnShow(false);
+                layer_->setCloseOnDismissed(false);
+                layer_->setScope(QStringLiteral("orbit-osk"));
+                layer_->setExclusiveZone(0);
+                LayerShellQt::Window::Anchors anchors;
+                anchors.setFlag(LayerShellQt::Window::AnchorTop);
+                anchors.setFlag(LayerShellQt::Window::AnchorLeft);
+                layer_->setAnchors(anchors);
+                if (placementScreen)
+                    layer_->setScreen(placementScreen);
+                layer_->setDesiredSize(size());
+                const QPoint localPosition = placementScreen
+                    ? panelPosition_ - placementScreen->geometry().topLeft()
+                    : panelPosition_;
+                layer_->setMargins(QMargins(localPosition.x(), localPosition.y(), 0, 0));
+            }
+        }
+
+        if (!layer_) {
+            showNormal();
+            resize(panel_->size());
+            move(panelPosition_);
+        } else {
+            show();
         }
         QTimer::singleShot(0, this, [this] {
             showInsertDialog(true);
-            showNormal();
+            if (layer_)
+                show();
+            else
+                showNormal();
             raise();
         });
     }
@@ -460,11 +752,12 @@ protected:
     }
 
     void closeEvent(QCloseEvent *event) override {
+        layerMoveTimer_.stop();
         settings_.beginGroup("window");
         settings_.setValue("width", panel_->width());
         settings_.setValue("height", panel_->height());
-        settings_.setValue("x", x());
-        settings_.setValue("y", y());
+        settings_.setValue("x", panelPosition_.x());
+        settings_.setValue("y", panelPosition_.y());
         settings_.endGroup();
         settings_.sync();
         QWidget::closeEvent(event);
@@ -474,6 +767,8 @@ protected:
         QWidget::resizeEvent(event);
         if (panel_)
             panel_->resize(size());
+        if (layer_)
+            layer_->setDesiredSize(size());
         const int gripSize = resizeGrips_.isEmpty() ? 0 : resizeGrips_.first()->width();
         if (resizeGrips_.size() == 4) {
             resizeGrips_[0]->move(0, 0);
@@ -500,7 +795,6 @@ private:
     QStringList snippetValues_;
     QGraphicsOpacityEffect *opacityEffect_{};
     QSystemTrayIcon *tray_{};
-    LayerShellQt::Window *layer_{};
     QSettings settings_;
     int repeatDelay_ = 450;
     int repeatInterval_ = 55;
@@ -511,6 +805,7 @@ private:
     QString borderColor_ = "#101722";
     QString keyLabelColor_ = "#eef2f7";
     QString hoverColor_ = "#3a506d";
+    UInputKeyboard uinput_;
     ModifierState shift_ = ModifierState::Off;
     ModifierState ctrl_ = ModifierState::Off;
     ModifierState alt_ = ModifierState::Off;
@@ -519,16 +814,80 @@ private:
     bool capsLock_ = false;
     QPoint dragPointerStart_;
     QPoint dragPanelStart_;
+    QPoint panelPosition_;
     QPoint savedPanelPosition_;
     bool restorePanelPosition_ = false;
+    LayerShellQt::Window *layer_ = nullptr;
+    QTimer layerMoveTimer_;
+    QPoint pendingLayerPosition_;
+
+    void applyLayerPosition() {
+        if (!layer_)
+            return;
+
+        QPoint position = pendingLayerPosition_;
+        QScreen *screen = QGuiApplication::screenAt(position);
+        if (!screen)
+            screen = layer_->screen();
+        if (!screen)
+            screen = QGuiApplication::primaryScreen();
+        if (!screen)
+            return;
+
+        const QRect area = screen->availableGeometry();
+        position.setX(qBound(area.left(), position.x(),
+                             qMax(area.left(), area.right() - width() + 1)));
+        position.setY(qBound(area.top(), position.y(),
+                             qMax(area.top(), area.bottom() - height() + 1)));
+        panelPosition_ = position;
+        if (layer_->screen() != screen)
+            layer_->setScreen(screen);
+        const QPoint localPosition = position - screen->geometry().topLeft();
+        layer_->setMargins(QMargins(localPosition.x(), localPosition.y(), 0, 0));
+        commitLayerPosition();
+    }
+
+    void commitLayerPosition() {
+        if (!windowHandle())
+            return;
+        auto *native = QGuiApplication::platformNativeInterface();
+        if (!native)
+            return;
+        auto *surface = static_cast<wl_surface *>(
+            native->nativeResourceForWindow(QByteArrayLiteral("surface"), windowHandle()));
+        if (!surface)
+            return;
+
+        wl_surface_commit(surface);
+        auto *display = static_cast<wl_display *>(
+            native->nativeResourceForIntegration(QByteArrayLiteral("display")));
+        if (display)
+            wl_display_flush(display);
+    }
 
     void movePanel(QPoint position) {
-        move(position);
+        if (layer_) {
+            QScreen *screen = QGuiApplication::screenAt(position);
+            if (!screen)
+                screen = layer_->screen();
+            if (!screen)
+                screen = QGuiApplication::primaryScreen();
+            if (screen) {
+                const QRect area = screen->availableGeometry();
+                position.setX(qBound(area.left(), position.x(),
+                                     qMax(area.left(), area.right() - width() + 1)));
+                position.setY(qBound(area.top(), position.y(),
+                                     qMax(area.top(), area.bottom() - height() + 1)));
+            }
+            panelPosition_ = position;
+            pendingLayerPosition_ = position;
+            if (!layerMoveTimer_.isActive())
+                layerMoveTimer_.start();
+        } else {
+            move(position);
+            panelPosition_ = position;
+        }
         panel_->move(0, 0);
-        settings_.beginGroup("window");
-        settings_.setValue("x", x());
-        settings_.setValue("y", y());
-        settings_.endGroup();
     }
 
     void minimizeToTray() {
@@ -537,7 +896,8 @@ private:
     }
 
     void restoreFromTray() {
-        showNormal();
+        if (!layer_)
+            showNormal();
         show();
         raise();
     }
@@ -545,11 +905,11 @@ private:
     void dragTo(const QPoint &pointer, bool begin) {
         if (begin) {
             dragPointerStart_ = pointer;
-            dragPanelStart_ = pos();
+            dragPanelStart_ = panelPosition_;
             return;
         }
         const QPoint delta = pointer - dragPointerStart_;
-        move(dragPanelStart_ + delta);
+        movePanel(dragPanelStart_ + delta);
     }
 
     QPushButton *key(const QString &label, const QString &action = {}, int width = 1,
@@ -824,8 +1184,47 @@ private:
             activeEditor_->insert(text);
             return;
         }
-        // Use zero inter-key and key-hold delays for maximum typing speed.
-        runYdotool({"type", "--key-delay", "0", "--key-hold", "0", "--", text});
+        queueInput([this, text] {
+            for (const uint codepoint : text.toUcs4()) {
+                int keyCode = 0;
+                bool shifted = false;
+                if (UInputKeyboard::asciiKey(codepoint, keyCode, shifted)) {
+                    if (!uinput_.tap(keyCode, shifted ? std::vector<int>{KEY_LEFTSHIFT}
+                                                       : std::vector<int>{}))
+                        return;
+                } else if (!uinput_.typeUnicode(codepoint)) {
+                    qWarning("Could not type Unicode codepoint U+%04X", codepoint);
+                    return;
+                }
+            }
+        });
+    }
+
+    void pasteClipboardText(const QString &text) {
+        QDBusInterface klipper(QStringLiteral("org.kde.klipper"),
+                               QStringLiteral("/klipper"),
+                               QStringLiteral("org.kde.klipper.klipper"));
+        bool clipboardUpdated = false;
+        if (klipper.isValid()) {
+            const QDBusMessage result =
+                klipper.call(QStringLiteral("setClipboardContents"), text);
+            if (result.type() != QDBusMessage::ErrorMessage) {
+                const QDBusReply<QString> current =
+                    klipper.call(QStringLiteral("getClipboardContents"));
+                clipboardUpdated = current.isValid() && current.value() == text;
+            }
+        }
+        if (!clipboardUpdated) {
+            qWarning("Klipper did not accept the selected clipboard entry; using Qt clipboard");
+            QGuiApplication::clipboard()->setText(text, QClipboard::Clipboard);
+        }
+
+        QTimer::singleShot(200, this, [this] {
+            queueInput([this] {
+                uinput_.tap(KEY_V, {KEY_LEFTCTRL});
+                clearModifiers();
+            });
+        });
     }
 
     void showInsertDialog(bool preload = false) {
@@ -928,7 +1327,7 @@ private:
             } else {
                 dialog.move(insertDragPosition_ + pointer - insertDragPointer_);
             }
-        }), 1);
+        }, QGuiApplication::platformName() == QStringLiteral("wayland")), 1);
         auto *close = new QPushButton("×", &dialog);
         close->setObjectName("closeButton");
         close->setFixedSize(22, 14);
@@ -1044,29 +1443,90 @@ private:
             item->setToolTip(snippet);
         }
 
-        auto loadClipboardHistory = [clipboardList, preview] {
-            QProcess klipper;
-            klipper.start("qdbus", {"org.kde.klipper", "/klipper",
-                                     "org.kde.klipper.klipper.getClipboardHistoryMenu"});
-            if (!klipper.waitForFinished(1000))
+        auto applyClipboardFilter = [clipboardFilter, clipboardList] {
+            const QString query = clipboardFilter->text().trimmed();
+            for (int i = 0; i < clipboardList->count(); ++i)
+                clipboardList->item(i)->setHidden(
+                    !query.isEmpty() &&
+                    !clipboardList->item(i)->toolTip().contains(query, Qt::CaseInsensitive));
+        };
+        auto lastClipboardValues = std::make_shared<QStringList>();
+        auto loadClipboardHistory = [clipboardList, preview, applyClipboardFilter,
+                                     lastClipboardValues] {
+            QDBusInterface klipper(QStringLiteral("org.kde.klipper"),
+                                   QStringLiteral("/klipper"),
+                                   QStringLiteral("org.kde.klipper.klipper"));
+            if (!klipper.isValid())
                 return;
-            const auto history = QString::fromLocal8Bit(klipper.readAllStandardOutput())
-                                     .split('\n', Qt::SkipEmptyParts);
-            for (const QString &historyEntry : history) {
+            const QDBusReply<QStringList> reply =
+                klipper.call(QStringLiteral("getClipboardHistoryMenu"));
+            if (!reply.isValid())
+                return;
+            const QStringList history = reply.value();
+            QStringList values;
+            const QRegularExpression imageDimensions(
+                QStringLiteral("(^|\\s)\\d+\\s*[x×]\\s*\\d+(\\s|$)"));
+            const auto isImageEntry = [&imageDimensions](const QString &entry) {
+                const QString label = entry.trimmed();
+                return label.startsWith(QStringLiteral("▨")) ||
+                       label.contains(imageDimensions);
+            };
+            for (int historyIndex = 0; historyIndex < history.size(); ++historyIndex) {
+                const QString &historyEntry = history.at(historyIndex);
                 // Klipper represents image entries as labels such as "▨ 303x537".
                 // They are not text clipboard entries and must not be shown here.
-                if (historyEntry.contains(QRegularExpression(QStringLiteral("(^|\\s)\\d+x\\d+(\\s|$)"))) ||
-                    historyEntry.startsWith(QStringLiteral("▨")))
+                if (isImageEntry(historyEntry))
                     continue;
-                const QString value = historyEntry.trimmed();
+                // getClipboardHistoryMenu() is a display-oriented API. Fetch the
+                // actual entry so leading/trailing whitespace and multiline text
+                // survive exactly as they were copied.
+                QString value = historyEntry;
+                const QDBusReply<QString> itemReply =
+                    klipper.call(QStringLiteral("getClipboardHistoryItem"), historyIndex);
+                if (itemReply.isValid())
+                    value = itemReply.value();
                 if (value.isEmpty()) continue;
-                if (value.startsWith(QStringLiteral("▨")) ||
-                    value.contains(QRegularExpression(QStringLiteral("^\\d+x\\d+$"))))
+                if (isImageEntry(value))
                     continue;
+                values.append(value);
+            }
+            QString selectedValue;
+            if (clipboardList->currentItem())
+                selectedValue = clipboardList->currentItem()->toolTip();
+            if (values == *lastClipboardValues) {
+                applyClipboardFilter();
+                return;
+            }
+            *lastClipboardValues = values;
+            clipboardList->clear();
+            for (const QString &value : values) {
                 auto *item = new QListWidgetItem(preview(value), clipboardList);
                 item->setToolTip(value);
             }
+            applyClipboardFilter();
+            if (!selectedValue.isEmpty()) {
+                for (int row = 0; row < clipboardList->count(); ++row) {
+                    if (clipboardList->item(row)->toolTip() == selectedValue) {
+                        clipboardList->setCurrentRow(row);
+                        break;
+                    }
+                }
+            }
         };
+        auto *clipboardRefreshTimer = new QTimer(&dialog);
+        clipboardRefreshTimer->setInterval(100);
+        clipboardRefreshTimer->setSingleShot(true);
+        connect(clipboardRefreshTimer, &QTimer::timeout, &dialog, loadClipboardHistory);
+        const bool klipperSignalConnected = QDBusConnection::sessionBus().connect(
+            QStringLiteral("org.kde.klipper"), QStringLiteral("/klipper"),
+            QStringLiteral("org.kde.klipper.klipper"),
+            QStringLiteral("clipboardHistoryUpdated"), clipboardRefreshTimer,
+            SLOT(start()));
+        if (!klipperSignalConnected) {
+            clipboardRefreshTimer->setInterval(1000);
+            clipboardRefreshTimer->setSingleShot(false);
+            clipboardRefreshTimer->start();
+        }
         if (preload)
             QTimer::singleShot(1000, &dialog, loadClipboardHistory);
         else
@@ -1081,7 +1541,8 @@ private:
             });
         };
         filterList(snippetFilter, snippetList);
-        filterList(clipboardFilter, clipboardList);
+        connect(clipboardFilter, &QLineEdit::textChanged, &dialog,
+                [applyClipboardFilter](const QString &) { applyClipboardFilter(); });
         for (auto *list : {snippetList, clipboardList}) {
             list->setMouseTracking(true);
             connect(list, &QListWidget::itemEntered, &dialog,
@@ -1158,17 +1619,24 @@ private:
         connect(insert, &QPushButton::clicked, &dialog,
                 [this, &dialog, snippetList, clipboardList, snippetValues, keepOpen] {
             QString value;
+            bool fromClipboard = false;
             if (snippetList->currentRow() >= 0)
                 value = snippetValues->at(snippetList->currentRow());
             else if (clipboardList->currentRow() >= 0) {
                 // Keep the value captured when the list was built. Klipper's
                 // history indices can shift while the filtered dialog stays open.
                 value = clipboardList->currentItem()->toolTip();
+                fromClipboard = true;
             }
             if (!value.isEmpty()) {
                 if (insertTargetWindow_)
                     insertTargetWindow_->requestActivate();
-                QTimer::singleShot(0, this, [this, value] { typeText(value); });
+                QTimer::singleShot(150, this, [this, value, fromClipboard] {
+                    if (fromClipboard)
+                        pasteClipboardText(value);
+                    else
+                        typeText(value);
+                });
             }
             if (!keepOpen->isChecked()) {
                 const QSize size = dialog.size();
@@ -1245,34 +1713,34 @@ private:
         };
         if (!codes.contains(action))
             return;
-        runYdotool({"key", "29:1", codes[action] + ":1",
-                    codes[action] + ":0", "29:0"});
-        clearModifiers();
+        const int keyCode = codes[action].toInt();
+        queueInput([this, keyCode] {
+            uinput_.tap(keyCode, {KEY_LEFTCTRL});
+            clearModifiers();
+        });
     }
 
     void sendChord(const QString &keyCode, bool includeShift) {
-        QStringList arguments {"key"};
-        QList<QString> modifiers;
-        if (ctrlActive()) modifiers << "29";
-        if (includeShift) modifiers << "42";
-        if (altActive()) modifiers << "56";
-        if (altGrActive()) modifiers << "100";
-        if (metaActive()) modifiers << "125";
-        for (const QString &code : modifiers)
-            arguments << code + ":1";
-        arguments << keyCode + ":1" << keyCode + ":0";
-        for (auto it = modifiers.crbegin(); it != modifiers.crend(); ++it)
-            arguments << *it + ":0";
-        runYdotool(arguments);
+        std::vector<int> modifiers;
+        if (ctrlActive()) modifiers.push_back(KEY_LEFTCTRL);
+        if (includeShift) modifiers.push_back(KEY_LEFTSHIFT);
+        if (altActive()) modifiers.push_back(KEY_LEFTALT);
+        if (altGrActive()) modifiers.push_back(KEY_RIGHTALT);
+        if (metaActive()) modifiers.push_back(KEY_LEFTMETA);
+        const int code = keyCode.toInt();
+        queueInput([this, code, modifiers = std::move(modifiers)]() mutable {
+            uinput_.tap(code, modifiers);
+        });
     }
 
-    void runYdotool(const QStringList &arguments) {
-        auto *process = new QProcess(this);
-        process->setStandardOutputFile(QProcess::nullDevice());
-        process->setStandardErrorFile(QProcess::nullDevice());
-        connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
-                process, &QObject::deleteLater);
-        process->start("ydotool", arguments);
+    void queueInput(std::function<void()> input) {
+        if (QGuiApplication::platformName() != QStringLiteral("xcb")) {
+            input();
+            return;
+        }
+        QTimer::singleShot(25, this, [this, input = std::move(input)]() mutable {
+            input();
+        });
     }
 
     void saveSettings() {
@@ -1351,7 +1819,7 @@ private:
             } else {
                 dialog->move(*menuDragPosition + pointer - *menuDragPointer);
             }
-        }), 1);
+        }, QGuiApplication::platformName() == QStringLiteral("wayland")), 1);
         auto *close = new QPushButton("×", dialog);
         close->setObjectName("closeButton");
         close->setFixedSize(22, 14);
@@ -1549,6 +2017,18 @@ private:
 };
 
 int main(int argc, char **argv) {
+    // Prefer Xwayland when it is available. Its override-redirect surface stays
+    // outside the compositor focus chain; DragBar moves it directly. The native
+    // Wayland fallback uses layer-shell and is intended for sessions without
+    // Xwayland.
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM",
+                qEnvironmentVariableIsEmpty("DISPLAY") ? "wayland" : "xcb");
+    }
+    if (qEnvironmentVariable("QT_QPA_PLATFORM") == QStringLiteral("wayland") &&
+        qEnvironmentVariableIsEmpty("QT_WAYLAND_SHELL_INTEGRATION")) {
+        qputenv("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell");
+    }
     QApplication app(argc, argv);
     app.setApplicationName("orbit-osk");
     app.setOrganizationName("Orbit");
